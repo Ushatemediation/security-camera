@@ -87,8 +87,10 @@ jobs:
       - name: Артефакт (скачать со страницы запуска)
         uses: actions/upload-artifact@v4
         with:
+          # отдаём ПАПКУ: скачанный с GitHub архив HomeCamera_Windows.zip
+          # сразу содержит приложение (без «zip внутри zip»)
           name: HomeCamera_Windows
-          path: HomeCamera_Windows.zip
+          path: release/HomeCamera
           if-no-files-found: error
 
       - name: Release (по тегу v*)
