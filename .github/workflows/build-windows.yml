@@ -16,7 +16,9 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
-
+    env:
+      # torch>=2.6 иначе грузит .pt в weights_only=True и ломает веса ultralytics
+      TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD: "1"
     steps:
       - uses: actions/checkout@v4
 

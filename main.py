@@ -23,6 +23,10 @@ from audio import AudioRecorder
 from notifier import TelegramNotifier
 from paths import APP_DIR, find_resource, resolve_ffmpeg
 
+# torch >= 2.6 грузит .pt в weights_only=True и ломает загрузку весов ultralytics.
+# Этот флаг возвращает старое поведение для доверенных локальных чекпоинтов.
+os.environ.setdefault("TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD", "1")
+
 BASE_DIR = APP_DIR
 CONFIG_PATH = BASE_DIR / "config.yaml"
 PID_FILE = BASE_DIR / ".main.lock"
