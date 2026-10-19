@@ -58,8 +58,16 @@ https://www.gyan.dev/ffmpeg/builds/ → «essentials») — он попадёт 
 ставит Python, зависимости, качает `yolov8n.pt` и `ffmpeg.exe`, собирает
 `HomeCamera.spec` и выкладывает артефакт `HomeCamera-windows`.
 
-Запуск: **Actions → build-windows → Run workflow** (или пуш тега `v1.0`).
-Готовый артефакт скачивается со страницы запуска.
+Запуск: **Actions → build-windows → Run workflow** (или просто пуш в `main`, или тег `v1.0`).
+Робот собирает приложение и пакует **`HomeCamera_Windows.zip`**:
+
+- артефакт `HomeCamera_Windows` — скачивается со страницы запуска;
+- на теге `v*` ZIP дополнительно прикрепляется к **GitHub Release** (прямая ссылка).
+
+Внутри ZIP (после распаковки — папка `HomeCamera\`):
+`HomeCamera.exe` + `_internal\` (все библиотеки) + `ffmpeg.exe` + `known\` (пустая) +
+`config.yaml` (шаблон) + `START_CAMERA.bat` + `INSTALL_AUTOSTART.bat` + `UNINSTALL.bat` +
+`download_models.bat` + `README.md`.
 
 ---
 

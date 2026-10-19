@@ -1,16 +1,22 @@
 name: build-windows
 
-# Сборка Windows-релиза (HomeCamera_vX.Y_Windows.zip) в облаке GitHub —
-# не нужен свой Windows-ПК. Запуск: вручную (Actions → Run workflow) или по тегу v*.
+# «Робот»: собирает Windows-приложение (PyInstaller) и пакует HomeCamera_Windows.zip.
+# Запускается: вручную (Actions → Run workflow), при пуше в main и по тегу v*.
+# На теге v* дополнительно создаёт GitHub Release с этим ZIP.
 
 on:
   workflow_dispatch:
   push:
+    branches: [main, master]
     tags: ["v*"]
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: windows-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -18,7 +24,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Установка зависимостей
+      - name: Зависимости
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
@@ -30,28 +36,64 @@ jobs:
       - name: ffmpeg.exe
         shell: pwsh
         run: |
-          curl -L -o ffmpeg.zip https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
+          curl.exe -L -o ffmpeg.zip https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
           Expand-Archive ffmpeg.zip -DestinationPath ffmpeg
           $exe = (Get-ChildItem -Recurse ffmpeg\ffmpeg.exe | Select-Object -First 1).FullName
           Copy-Item $exe ffmpeg.exe
 
-      - name: Сборка PyInstaller (--onedir)
+      - name: Сборка приложения (PyInstaller, --onedir)
         run: python -m PyInstaller --noconfirm --clean HomeCamera.spec
 
-      - name: Сборка релизной папки
-        shell: cmd
+      - name: Собрать релизную папку
+        shell: pwsh
         run: |
-          copy config.example.yaml dist\HomeCamera\
-          copy START_CAMERA.bat dist\HomeCamera\
-          copy INSTALL_AUTOSTART.bat dist\HomeCamera\
-          copy UNINSTALL.bat dist\HomeCamera\
-          copy download_models.bat dist\HomeCamera\
-          copy README.md dist\HomeCamera\
-          copy ffmpeg.exe dist\HomeCamera\
+          $rel = "release\HomeCamera"
+          New-Item -ItemType Directory -Force -Path $rel | Out-Null
 
-      - name: Артефакт
+          # 1) скомпилированное приложение + все библиотеки
+          Copy-Item -Recurse -Force dist\HomeCamera\* $rel
+
+          # 2) пустая папка known/ — сюда заказчик кладёт фото
+          New-Item -ItemType Directory -Force -Path "$rel\known" | Out-Null
+          New-Item -ItemType File -Force -Path "$rel\known\.gitkeep" | Out-Null
+
+          # 3) шаблон конфига -> config.yaml (сюда вписывают токен)
+          Copy-Item config.example.yaml "$rel\config.yaml"
+          Remove-Item "$rel\config.example.yaml" -ErrorAction SilentlyContinue
+
+          # 4) батники и документация
+          Copy-Item START_CAMERA.bat "$rel\"
+          Copy-Item INSTALL_AUTOSTART.bat "$rel\"
+          Copy-Item UNINSTALL.bat "$rel\"
+          Copy-Item download_models.bat "$rel\"
+          Copy-Item README.md "$rel\README.md"
+
+          # 5) ffmpeg рядом с exe
+          Copy-Item ffmpeg.exe "$rel\ffmpeg.exe"
+
+          # подстраховка: ничего лишнего (логи/записи) в релиз не попало
+          Remove-Item -Recurse -Force "$rel\logs" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "$rel\recordings" -ErrorAction SilentlyContinue
+
+          Write-Host "=== Содержимое релиза ==="
+          Get-ChildItem $rel | Select-Object Name
+
+      - name: Упаковать HomeCamera_Windows.zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "release\HomeCamera" -DestinationPath "HomeCamera_Windows.zip" -Force
+          Get-Item HomeCamera_Windows.zip | Select-Object Name, @{n="MB";e={[math]::Round($_.Length/1MB,1)}}
+
+      - name: Артефакт (скачать со страницы запуска)
         uses: actions/upload-artifact@v4
         with:
-          name: HomeCamera-windows
-          path: dist/HomeCamera/**
+          name: HomeCamera_Windows
+          path: HomeCamera_Windows.zip
           if-no-files-found: error
+
+      - name: Release (по тегу v*)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: HomeCamera_Windows.zip
+          generate_release_notes: true
