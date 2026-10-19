@@ -553,8 +553,23 @@ def main():
 
     emb_path = BASE_DIR / "known" / "embedding.npy"
     if not emb_path.exists():
-        logger.error("Эмбеддинг не найден, сначала запусти enroll.py")
-        sys.exit(1)
+        # Авто-регистрация: если в known/ лежат фото — строим эмбеддинги сами,
+        # чтобы пользователю не нужно было запускать enroll вручную.
+        known_dir = BASE_DIR / "known"
+        photos = [
+            p for p in known_dir.iterdir()
+            if p.suffix.lower() in (".jpg", ".jpeg", ".png")
+        ] if known_dir.exists() else []
+        if photos:
+            logger.info(f"Найдено фото лиц: {len(photos)} — строю эмбеддинги (один раз)...")
+            try:
+                import enroll
+                enroll.main()
+            except Exception:
+                logger.error(f"Авто-регистрация не удалась:\n{traceback.format_exc()}")
+        if not emb_path.exists():
+            logger.error("Эмбеддинг не найден. Положите фото в known/ и запустите снова.")
+            sys.exit(1)
     emb_data = np.load(emb_path, allow_pickle=True).item()
     logger.info(f"Загружено эмбеддингов: {len(emb_data)}")
 
