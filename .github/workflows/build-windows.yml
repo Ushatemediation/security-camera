@@ -1,0 +1,57 @@
+name: build-windows
+
+# Сборка Windows-релиза (HomeCamera_vX.Y_Windows.zip) в облаке GitHub —
+# не нужен свой Windows-ПК. Запуск: вручную (Actions → Run workflow) или по тегу v*.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Установка зависимостей
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-build.txt
+
+      - name: Веса YOLOv8n
+        run: python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
+
+      - name: ffmpeg.exe
+        shell: pwsh
+        run: |
+          curl -L -o ffmpeg.zip https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg
+          $exe = (Get-ChildItem -Recurse ffmpeg\ffmpeg.exe | Select-Object -First 1).FullName
+          Copy-Item $exe ffmpeg.exe
+
+      - name: Сборка PyInstaller (--onedir)
+        run: python -m PyInstaller --noconfirm --clean HomeCamera.spec
+
+      - name: Сборка релизной папки
+        shell: cmd
+        run: |
+          copy config.example.yaml dist\HomeCamera\
+          copy START_CAMERA.bat dist\HomeCamera\
+          copy INSTALL_AUTOSTART.bat dist\HomeCamera\
+          copy UNINSTALL.bat dist\HomeCamera\
+          copy download_models.bat dist\HomeCamera\
+          copy README.md dist\HomeCamera\
+          copy ffmpeg.exe dist\HomeCamera\
+
+      - name: Артефакт
+        uses: actions/upload-artifact@v4
+        with:
+          name: HomeCamera-windows
+          path: dist/HomeCamera/**
+          if-no-files-found: error

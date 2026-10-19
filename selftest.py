@@ -20,8 +20,9 @@ import yaml
 
 from audio import AudioRecorder
 from notifier import TelegramNotifier
+from paths import APP_DIR
 
-BASE = Path(__file__).resolve().parent
+BASE = APP_DIR
 
 
 def main() -> int:

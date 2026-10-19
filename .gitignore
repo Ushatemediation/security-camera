@@ -16,3 +16,5 @@ known/*
 service/service.log
 service/build/
 service/dist/
+build/
+dist/

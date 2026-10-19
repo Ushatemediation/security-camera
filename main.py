@@ -21,8 +21,9 @@ import yaml
 
 from audio import AudioRecorder
 from notifier import TelegramNotifier
+from paths import APP_DIR, find_resource, resolve_ffmpeg
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = APP_DIR
 CONFIG_PATH = BASE_DIR / "config.yaml"
 PID_FILE = BASE_DIR / ".main.lock"
 
@@ -543,6 +544,8 @@ def main():
     atexit.register(remove_pid_file)
 
     cfg = load_config()
+    # ffmpeg: ищем рядом с exe/внутри бандла, иначе берём из PATH
+    cfg["telegram"]["ffmpeg_path"] = resolve_ffmpeg(cfg["telegram"].get("ffmpeg_path", "ffmpeg"))
     if args.camera is not None:
         cfg["camera"]["device_id"] = args.camera
     if args.source is not None:
@@ -567,6 +570,8 @@ def main():
 
     from insightface.app import FaceAnalysis
 
+    if not (Path.home() / ".insightface" / "models" / "buffalo_l").exists():
+        logger.info("Модель лиц buffalo_l не найдена — скачается автоматически (~300 МБ)")
     face_app = FaceAnalysis(
         name="buffalo_l",
         allowed_modules=["detection", "recognition"],
@@ -585,7 +590,7 @@ def main():
     pt_cfg = cfg["person_tracking"]
     tracker: PersonTracker | None = None
     if pt_cfg["enabled"]:
-        model_path = BASE_DIR / pt_cfg["model"]
+        model_path = find_resource(pt_cfg["model"]) or (BASE_DIR / pt_cfg["model"])
         if not model_path.exists():
             logger.info(f"{pt_cfg['model']} не найден рядом с проектом — ultralytics докачает автоматически")
         tracker = PersonTracker(model_path, pt_cfg, logger, stop_event)

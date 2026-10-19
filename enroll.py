@@ -7,7 +7,9 @@ import cv2
 import numpy as np
 import yaml
 
-BASE_DIR = Path(__file__).resolve().parent
+from paths import APP_DIR
+
+BASE_DIR = APP_DIR
 KNOWN_DIR = BASE_DIR / "known"
 
 

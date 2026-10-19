@@ -23,6 +23,8 @@ import cv2
 import numpy as np
 import requests
 
+from paths import resolve_ffmpeg
+
 # Базовый адрес Telegram Bot API (метод добавляется к нему).
 TG_API = "https://api.telegram.org"
 
@@ -62,7 +64,7 @@ class TelegramNotifier:
         self.cooldown = float(self.tg_cfg.get("cooldown_seconds", 30))
         self.retry_base = float(self.tg_cfg.get("retry_base_seconds", 5))
         self.retry_max = max(1, int(self.tg_cfg.get("retry_max_attempts", 3)))
-        self.ffmpeg_path = self.tg_cfg.get("ffmpeg_path", "ffmpeg")
+        self.ffmpeg_path = resolve_ffmpeg(self.tg_cfg.get("ffmpeg_path", "ffmpeg"))
         self.telegram_max_mb = float(self.tg_cfg.get("telegram_max_mb", 49))
         self.send_photo = bool(self.tg_cfg.get("send_photo", True))
         self.send_video = bool(self.tg_cfg.get("send_video", True))

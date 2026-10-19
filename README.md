@@ -69,6 +69,19 @@ start.bat             :: запуск в фоне (без окна консол�
 
 ---
 
+## Готовый релиз (Windows, без установки Python)
+
+Скачайте `HomeCamera_v1.0_Windows.zip` (раздел **Releases**), распакуйте в любую папку и:
+
+1. впишите `telegram.token` и `telegram.chat_id` в `config.yaml`
+   (или просто запустите `START_CAMERA.bat` — он откроет файл в блокноте);
+2. положите фото людей в папку `known/` и один раз выполните `HomeCamera.exe enroll`;
+3. запустите **`START_CAMERA.bat`** — камера работает в фоне, без окна консоли.
+
+Автозапуск при входе в систему — `INSTALL_AUTOSTART.bat`, удалить — `UNINSTALL.bat`.
+Модели при первом запуске докачиваются сами (или заранее — `download_models.bat`).
+Сборка релиза описана в `docs/BUILD.md`.
+
 ## Как получить токен бота (2 минуты)
 
 1. В Telegram откройте **[@BotFather](https://t.me/BotFather)** → команда `/newbot`
