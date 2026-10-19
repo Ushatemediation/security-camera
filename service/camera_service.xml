@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Author>HomeCameraService</Author>
+    <Description>Home security camera background service (headless)</Description>
+  </RegistrationInfo>
+
+  <Triggers>
+    <!-- Запуск при загрузке системы. Delay PT30S — пауза, чтобы успели
+         инициализироваться сеть, USB/камера и сетевые шары. -->
+    <BootTrigger>
+      <Enabled>true</Enabled>
+      <Delay>PT30S</Delay>
+    </BootTrigger>
+  </Triggers>
+
+  <Principals>
+    <Principal id="Author">
+      <!-- S-1-5-18 = LOCAL SYSTEM: работает без входа пользователя.
+           Если приложению нужен рабочий стол/веб-камера в сессии юзера,
+           замените на SID пользователя и добавьте LogonTrigger (см. README). -->
+      <UserId>S-1-5-18</UserId>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+
+    <!-- PT0S = без ограничения времени выполнения (задача не будет убита). -->
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+
+    <!-- АВТОПЕРЕЗАПУСК при падении процесса (ненулевой код возврата). -->
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>999</Count>
+    </RestartOnFailure>
+  </Settings>
+
+  <!-- ВАРИАНТ ПО УМОЛЧАНИЮ: pythonw.exe + supervisor.py + приложение.
+       Если собран HomeCameraService.exe (см. build_service.ps1), замените
+       Command на путь к exe, а Arguments оставьте пустым. -->
+  <Actions Context="Author">
+    <Exec>
+      <Command>C:\HomeCamera\venv\Scripts\pythonw.exe</Command>
+      <Arguments>"C:\HomeCamera\service\supervisor.py"</Arguments>
+      <WorkingDirectory>C:\HomeCamera</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>

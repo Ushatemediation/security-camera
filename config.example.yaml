@@ -1,0 +1,71 @@
+# ============================================================================
+#  Security Camera — пример конфигурации.
+#  Скопируйте в config.yaml и впишите свои значения:
+#      cp config.example.yaml config.yaml
+#  config.yaml в .gitignore — секреты в репозиторий не попадают.
+# ============================================================================
+
+camera:
+  device_id: 0            # 0 — камера по умолчанию; 1, 2… — другие
+
+motion:
+  process_fps: 8          # частота анализа движения (не всего видео)
+  resize_width: 320       # ширина кадра для детектора движения
+  history: 300            # история фона MOG2 (кадров)
+  var_threshold: 25       # порог чувствительности MOG2
+  motion_min_area: 0.02   # доля площади срабатывания движения
+  global_change_ratio: 0.45  # выше — считаем сменой света и сбрасываем фон
+  warmup_frames: 15       # кадров прогрева фона после старта/сброса
+  global_reset_cooldown: 5
+
+face:
+  det_size: [320, 320]    # размер входа детектора лиц
+  min_face_px: 60         # игнорировать лица меньше (px в оригинале)
+  threshold: 0.5          # порог косинусной близости для совпадения
+  consecutive_frames: 3   # сколько кадров подряд для триггера
+  recognition_interval_recording: 0.5  # сек между распознаваниями во время записи
+
+recording:
+  pre_seconds: 5          # сколько секунд ДО события попадает в клип
+  post_seconds: 5         # сколько секунд после ухода цели писать
+  max_recordings_gb: 10   # лимит папки recordings/ (старое удаляется)
+  disk_check_interval_seconds: 60
+  queue_size: 240         # размер очереди кадров на запись
+  mux_audio: true         # вшивать звук с микрофона прямо в mp4 на диске
+  max_seconds: 120        # максимум длительности одной записи (0 = без лимита)
+
+person_tracking:
+  enabled: true
+  model: "yolov8n.pt"
+  person_fps: 8
+  person_conf: 0.4
+  imgsz: 416
+  track_lost_grace_seconds: 3
+
+resilience:
+  camera_fail_threshold: 10
+  camera_reconnect_seconds: 5
+  min_free_gb: 1
+  graceful_shutdown_timeout: 10
+
+telegram:
+  # 1) Получите токен у @BotFather: /newbot → скопируйте токен сюда.
+  token: ""
+  # 2) Свой chat_id: напишите боту /start, затем узнайте id через @userinfobot
+  #    (или оставьте chat_ids: [] и добавьте id после первого сообщения боту).
+  chat_ids: []
+  cooldown_seconds: 30          # не чаще одного уведомления в N секунд
+  retry_base_seconds: 5         # база экспоненциальной задержки повторов
+  retry_max_attempts: 3
+  ffmpeg_path: "ffmpeg"         # путь к ffmpeg (или ffmpeg.exe)
+  telegram_max_mb: 49           # лимит размера видео для отправки
+  send_photo: true              # слать JPEG-снимок при событии
+  send_video: true              # слать видео mp4 со звуком
+
+audio:
+  enabled: true
+  samplerate: 16000
+  channels: 1
+  device: null                  # null = микрофон по умолчанию
+  segment_seconds: 5
+  buffer_seconds: 60
