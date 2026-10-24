@@ -69,3 +69,9 @@ audio:
   device: null                  # null = микрофон по умолчанию
   segment_seconds: 5
   buffer_seconds: 60
+
+system:
+  # Не давать компьютеру уходить в сон, пока работает камера (чтобы события
+  # приходили и с погашенным экраном). Windows — SetThreadExecutionState,
+  # macOS — caffeinate, Linux — systemd-inhibit. false — не вмешиваться.
+  prevent_sleep: true

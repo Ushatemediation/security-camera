@@ -20,6 +20,7 @@ import numpy as np
 import yaml
 
 from audio import AudioRecorder
+from keepawake import KeepAwake
 from notifier import TelegramNotifier
 from paths import APP_DIR, find_resource, resolve_ffmpeg
 
@@ -550,6 +551,11 @@ def main():
     cfg = load_config()
     # ffmpeg: ищем рядом с exe/внутри бандла, иначе берём из PATH
     cfg["telegram"]["ffmpeg_path"] = resolve_ffmpeg(cfg["telegram"].get("ffmpeg_path", "ffmpeg"))
+
+    # Не давать ПК уйти в сон, пока работает камера (system.prevent_sleep)
+    keep_awake = KeepAwake(cfg.get("system", {}) or {}, logger)
+    keep_awake.start()
+
     if args.camera is not None:
         cfg["camera"]["device_id"] = args.camera
     if args.source is not None:
@@ -907,6 +913,7 @@ def main():
                 logger.warning("WriterThread не завершился вовремя, закрываю принудительно")
         notifier.shutdown()
         audio.shutdown()
+        keep_awake.stop()
         cv2.destroyAllWindows()
         remove_pid_file()
 
