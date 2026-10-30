@@ -66,6 +66,12 @@ def open_camera(camera_id):
         cap = cv2.VideoCapture(camera_id)          # файл-источник (тест без камеры)
     elif sys.platform == "win32":
         cap = cv2.VideoCapture(int(camera_id), cv2.CAP_DSHOW)
+        if cap.isOpened():
+            # MJPG вместо YUY2: в ~10 раз меньше данных по USB -> кадры не теряются,
+            # картинка не «дёргается». Некоторые камеры молча игнорируют — не страшно.
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+            cap.set(cv2.CAP_PROP_FPS, 30)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     else:
         cap = cv2.VideoCapture(int(camera_id))
     if not cap.isOpened():
@@ -131,6 +137,15 @@ class CaptureThread(threading.Thread):
         self.fail_count = 0
         self.start_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.start_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    @property
+    def current_fps(self) -> float:
+        """Реальный fps по последним кадрам (не то, что заявляет камера)."""
+        if len(self.fps_window) >= 2:
+            dt = self.fps_window[-1] - self.fps_window[0]
+            if dt > 0:
+                return (len(self.fps_window) - 1) / dt
+        return 0.0
 
     def run(self):
         try:
@@ -344,6 +359,7 @@ class WriterThread(threading.Thread):
         self.stop_event = stop_event
         self.q: queue.Queue = queue.Queue(maxsize=self.rec_cfg["queue_size"])
         self.writer: cv2.VideoWriter | None = None
+        self.fps = 25.0        # реальный fps камеры; задаётся перед началом записи
         self.path: Path | None = None
         self.timestamps: list[float] = []
         self.fps_window: deque[float] = deque(maxlen=60)
@@ -371,7 +387,7 @@ class WriterThread(threading.Thread):
             name = time.strftime("%Y-%m-%d_%H-%M-%S") + ".mp4"
             self.path = self.out_dir / name
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            self.writer = cv2.VideoWriter(str(self.path), fourcc, 25.0, (w, h))
+            self.writer = cv2.VideoWriter(str(self.path), fourcc, float(self.fps or 25.0), (w, h))
             if not self.writer.isOpened():
                 raise RuntimeError("VideoWriter не открылся")
             self.timestamps = []
@@ -854,6 +870,10 @@ def main():
                 else:
                     writing = True
                     rec_start_ts = ts
+                    # Пишем с реальной частотой кадров, иначе видео «дёргается».
+                    measured = capture.current_fps
+                    if 5.0 <= measured <= 60.0:
+                        writer_thread.fps = measured
                     writer_thread.start_recording(frame)
                     for bts, bf in pre_buf.release():
                         writer_thread.put(bts, bf)
