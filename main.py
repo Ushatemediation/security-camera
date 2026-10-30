@@ -23,6 +23,7 @@ from audio import AudioRecorder
 from keepawake import KeepAwake
 from notifier import TelegramNotifier
 from paths import APP_DIR, find_resource, resolve_ffmpeg
+from uploader import ArchiveUploader
 
 # torch >= 2.6 грузит .pt в weights_only=True и ломает загрузку весов ultralytics.
 # Этот флаг возвращает старое поведение для доверенных локальных чекпоинтов.
@@ -633,6 +634,10 @@ def main():
 
     notifier = TelegramNotifier(cfg["telegram"], logger, BASE_DIR, stop_event, audio=audio)
 
+    # Выгрузка готовых записей на сервер-архив (веб-галерея). Опция server.*
+    archive = ArchiveUploader(cfg.get("server", {}) or {}, logger, stop_event)
+    notifier.on_ready = archive.upload_video
+
     mot = cfg["motion"]
     bg = cv2.createBackgroundSubtractorMOG2(
         history=mot["history"], varThreshold=mot["var_threshold"], detectShadows=True
@@ -648,6 +653,8 @@ def main():
         # Локально вшиваем звук прямо в файл записи (работает и без Telegram).
         want_local = bool(cfg["recording"].get("mux_audio", True)) and aw is not None
         if not notifier.enabled and not want_local:
+            # Telegram выключен и мукс не нужен — но архив должен получить файл.
+            archive.upload_video(path)
             return
         notifier.enqueue_video(
             path,
@@ -912,6 +919,7 @@ def main():
             if writer_thread.is_alive():
                 logger.warning("WriterThread не завершился вовремя, закрываю принудительно")
         notifier.shutdown()
+        archive.shutdown()
         audio.shutdown()
         keep_awake.stop()
         cv2.destroyAllWindows()

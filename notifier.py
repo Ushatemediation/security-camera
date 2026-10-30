@@ -69,6 +69,10 @@ class TelegramNotifier:
         self.send_photo = bool(self.tg_cfg.get("send_photo", True))
         self.send_video = bool(self.tg_cfg.get("send_video", True))
 
+        # Внешний потребитель готового файла (например, выгрузка на сервер-архив).
+        # Вызывается после того, как в запись вшит звук.
+        self.on_ready = None
+
         # Нотификатор активен только если есть токен и хотя бы один чат.
         self.enabled = bool(self.token and self.chat_ids)
         if not self.enabled:
@@ -242,6 +246,13 @@ class TelegramNotifier:
                     self.logger.info(f"Звук вшит в запись: {path.name}")
                 except OSError as e:
                     self.logger.warning(f"Не удалось вшить звук в {path.name}: {e}")
+
+            # Файл на диске готов (со звуком) — отдаём внешнему потребителю (выгрузка).
+            if self.on_ready is not None:
+                try:
+                    self.on_ready(path)
+                except Exception as e:
+                    self.logger.warning(f"on_ready упал: {e}")
 
             if send_path is None:
                 # Файл не удалось уложить в лимит — отправляем текстом.

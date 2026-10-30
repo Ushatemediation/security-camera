@@ -75,3 +75,12 @@ system:
   # приходили и с погашенным экраном). Windows — SetThreadExecutionState,
   # macOS — caffeinate, Linux — systemd-inhibit. false — не вмешиваться.
   prevent_sleep: true
+
+server:
+  # Выгрузка записей на сервер-архив с веб-галереей (см. server_app/).
+  # false — записи остаются только на этом компьютере и в Telegram.
+  enabled: false
+  url: "https://ВАШ_СЕРВЕР:8080"
+  token: ""                # выдаётся сервером (HC_TOKEN)
+  verify_tls: false        # true — если у сервера настоящий HTTPS-сертификат
+  camera: "home"           # метка камеры в галерее
