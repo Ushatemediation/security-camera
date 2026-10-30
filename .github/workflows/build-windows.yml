@@ -80,6 +80,7 @@ jobs:
           Copy-Item INSTALL_AUTOSTART.bat "$rel\"
           Copy-Item UNINSTALL.bat "$rel\"
           Copy-Item download_models.bat "$rel\"
+          Copy-Item ЗАПИСАТЬ.bat "$rel\"
           Copy-Item DIAGNOSTIC.bat "$rel\"
           Copy-Item README.md "$rel\README.md"
           Copy-Item ПРОЧТИ_МЕНЯ.txt "$rel\ПРОЧТИ_МЕНЯ.txt"

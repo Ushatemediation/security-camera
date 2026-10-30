@@ -11,6 +11,27 @@
 
 import sys
 
+# В сборке без консоли (console=False) sys.stdout/stderr равны None,
+# и библиотеки с прогресс-барами (tqdm в insightface) падают с AttributeError.
+# Подменяем их на пустой поток — тогда загрузка моделей не ломается.
+if sys.stdout is None or sys.stderr is None:
+    import io
+
+    class _Null(io.TextIOBase):
+        def write(self, s):  # noqa: D401 - заглушка
+            return len(s)
+
+        def flush(self):
+            pass
+
+        def isatty(self):
+            return False
+
+    if sys.stdout is None:
+        sys.stdout = _Null()
+    if sys.stderr is None:
+        sys.stderr = _Null()
+
 
 def main() -> int:
     args = sys.argv[1:]

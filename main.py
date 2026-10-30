@@ -684,6 +684,8 @@ def main():
     last_stats_log = 0.0
     last_preview = 0.0
     last_motion_ts = 0.0
+    manual_until = 0.0                 # ручной триггер: до какого времени пишем
+    trigger_path = APP_DIR / "trigger.now"
     last_seq = 0
     motion_on = False
     changed = 0.0
@@ -775,7 +777,18 @@ def main():
             # активном трекинге цели или записи. Нет движения -> кадр скипается,
             # модели не запускаются. Прежний «safety check» (каждые 2с без движения)
             # убран — он постоянно жёг CPU на распознавании.
-            heavy_active = motion_on or target_track_id is not None or writing
+            # Ручной триггер: появился файл trigger.now рядом с программой —
+            # запускаем запись, как будто сработала детекция.
+            if trigger_path.exists():
+                try:
+                    trigger_path.unlink()
+                except OSError:
+                    pass
+                manual_until = ts + float(cfg["recording"]["post_seconds"]) + 1.0
+                logger.info("Ручной триггер: запись по команде (как при сработке)")
+            manual_now = ts < manual_until
+
+            heavy_active = motion_on or target_track_id is not None or writing or manual_now
             if heavy_active:
                 interval = cfg["face"]["recognition_interval_recording"] if writing else 0.0
                 if ts - last_recog_submit >= interval:
@@ -827,7 +840,7 @@ def main():
                         track_lost_since = None
                         last_face_bbox = None
 
-            target_present = found or target_track_id is not None
+            target_present = found or target_track_id is not None or manual_now
 
             if target_present and not writing:
                 if ts - last_disk_check > 30:
