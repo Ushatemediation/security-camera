@@ -37,6 +37,10 @@ RETENTION_DAYS = int(os.environ.get("HC_RETENTION_DAYS", "30"))
 MAX_GB = float(os.environ.get("HC_MAX_GB", "22"))
 CLEAN_EVERY = 3600
 
+# Ретрансляция в Telegram (нужна, когда с сети камеры api.telegram.org недоступен).
+TG_TOKEN = os.environ.get("HC_BOT_TOKEN", "")
+TG_CHATS = [c for c in os.environ.get("HC_TG_CHATS", "").replace(" ", "").split(",") if c]
+
 ALLOWED = {".mp4": "video", ".mov": "video", ".jpg": "photo", ".jpeg": "photo", ".png": "photo"}
 
 app = Flask(__name__)
@@ -161,6 +165,32 @@ def token_ok():
     return bool(TOKEN) and hmac.compare_digest(given, TOKEN)
 
 
+def forward_to_telegram(path: str, caption: str, kind: str) -> None:
+    """Переслать готовый файл в Telegram с сервера (обход блокировки на стороне камеры)."""
+    if not TG_TOKEN or not TG_CHATS:
+        return
+    try:
+        import requests
+        method = "sendPhoto" if kind == "photo" else "sendVideo"
+        field = "photo" if kind == "photo" else "video"
+        for chat in TG_CHATS:
+            try:
+                with open(path, "rb") as fh:
+                    data = {"chat_id": chat, "caption": caption[:1000]}
+                    if kind != "photo":
+                        data["supports_streaming"] = True
+                    requests.post(
+                        f"https://api.telegram.org/bot{TG_TOKEN}/{method}",
+                        data=data,
+                        files={field: (os.path.basename(path), fh, "video/mp4" if kind != "photo" else "image/jpeg")},
+                        timeout=300,
+                    )
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 @app.get("/health")
 def health():
     return jsonify(ok=True)
@@ -194,6 +224,14 @@ def upload():
     c.commit()
     cid = cur.lastrowid
     c.close()
+
+    if TG_CHATS:
+        threading.Thread(
+            target=forward_to_telegram,
+            args=(path, f"{camera or 'камера'} · {ts[:16].replace('T', ' ')}", kind),
+            daemon=True,
+        ).start()
+
     return jsonify(ok=True, id=cid, size=size)
 
 

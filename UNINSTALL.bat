@@ -1,9 +1,10 @@
 @echo off
 chcp 65001 >nul
 rem ============================================================================
-rem  UNINSTALL.bat — удалить автозапуск и остановить камеру.
+rem  UNINSTALL.bat — остановить камеру и убрать автозапуск.
+rem  Имя exe может быть ЛЮБЫМ: скрипт находит его рядом (кроме ffmpeg.exe).
 rem ============================================================================
-setlocal
+setlocal enabledelayedexpansion
 set "TASK=HomeCameraService"
 
 net session >nul 2>&1
@@ -13,13 +14,24 @@ if errorlevel 1 (
     exit /b
 )
 
+cd /d "%~dp0"
+
+set "EXE="
+for %%f in (*.exe) do (
+    if /i not "%%~nxf"=="ffmpeg.exe" if not defined EXE set "EXE=%%~ff"
+)
+
 echo Останавливаю камеру и удаляю автозапуск "%TASK%"...
 schtasks /end    /tn "%TASK%" >nul 2>&1
 schtasks /delete /tn "%TASK%" /f >nul 2>&1
+
+if defined EXE (
+    for %%f in ("!EXE!") do taskkill /im "%%~nxf" /f >nul 2>&1
+)
 taskkill /im HomeCamera.exe /f >nul 2>&1
 
 echo.
-echo   ✓ Автозапуск удалён, камера остановлена.
+echo   ✓ Камера остановлена, автозапуск снят.
 echo   (Файлы проекта, записи и фото не удаляются.)
 pause
 endlocal

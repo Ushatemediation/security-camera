@@ -1,0 +1,22 @@
+[Unit]
+Description=HomeCamera Telegram bot (24/7)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=homecamera
+Group=homecamera
+EnvironmentFile=/etc/homecamera-bot.env
+WorkingDirectory=/opt/homecamera
+ExecStart=/opt/homecamera/venv/bin/python /opt/homecamera/bot.py
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/var/lib/homecamera
+
+[Install]
+WantedBy=multi-user.target
