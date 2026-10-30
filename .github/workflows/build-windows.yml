@@ -19,6 +19,9 @@ jobs:
     env:
       # torch>=2.6 иначе грузит .pt в weights_only=True и ломает веса ultralytics
       TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD: "1"
+      # адрес и токен сервера-ретранслятора попадут в config.yaml внутри архива
+      HC_SERVER_URL: ${{ secrets.HC_SERVER_URL }}
+      HC_SERVER_TOKEN: ${{ secrets.HC_SERVER_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -59,8 +62,17 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$rel\known" | Out-Null
           New-Item -ItemType File -Force -Path "$rel\known\.gitkeep" | Out-Null
 
-          # 3) шаблон конфига -> config.yaml (сюда вписывают токен)
-          Copy-Item config.example.yaml "$rel\config.yaml"
+          # 3) ГОТОВЫЙ config.yaml: подставляем адрес и токен сервера из секретов
+          if ("$env:HC_SERVER_URL" -and "$env:HC_SERVER_TOKEN") {
+            $cfg = Get-Content config.release.yaml -Raw
+            $cfg = $cfg.Replace("__SERVER_URL__", "$env:HC_SERVER_URL")
+            $cfg = $cfg.Replace("__SERVER_TOKEN__", "$env:HC_SERVER_TOKEN")
+            Set-Content -Path "$rel\config.yaml" -Value $cfg -Encoding UTF8 -NoNewline
+            Write-Host "config.yaml: подставлен сервер $env:HC_SERVER_URL"
+          } else {
+            Copy-Item config.example.yaml "$rel\config.yaml"
+            Write-Host "ВНИМАНИЕ: секреты сервера не заданы — в архиве шаблон конфига"
+          }
           Remove-Item "$rel\config.example.yaml" -ErrorAction SilentlyContinue
 
           # 4) батники и документация
@@ -68,6 +80,7 @@ jobs:
           Copy-Item INSTALL_AUTOSTART.bat "$rel\"
           Copy-Item UNINSTALL.bat "$rel\"
           Copy-Item download_models.bat "$rel\"
+          Copy-Item DIAGNOSTIC.bat "$rel\"
           Copy-Item README.md "$rel\README.md"
           Copy-Item ПРОЧТИ_МЕНЯ.txt "$rel\ПРОЧТИ_МЕНЯ.txt"
 

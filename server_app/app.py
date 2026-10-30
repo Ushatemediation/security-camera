@@ -40,6 +40,7 @@ CLEAN_EVERY = 3600
 # Ретрансляция в Telegram (нужна, когда с сети камеры api.telegram.org недоступен).
 TG_TOKEN = os.environ.get("HC_BOT_TOKEN", "")
 TG_CHATS = [c for c in os.environ.get("HC_TG_CHATS", "").replace(" ", "").split(",") if c]
+PUBLIC_URL = os.environ.get("HC_PUBLIC_URL", "")
 
 ALLOWED = {".mp4": "video", ".mov": "video", ".jpg": "photo", ".jpeg": "photo", ".png": "photo"}
 
@@ -271,6 +272,93 @@ def media(rel):
     if ".." in rel:
         abort(400)
     return send_from_directory(MEDIA, rel, conditional=True)
+
+
+CONFIG_TEMPLATE = """camera:
+  device_id: 0                 # 0 — первая камера; если не та — 1 или 2
+
+motion:
+  process_fps: 8
+  resize_width: 320
+  history: 300
+  var_threshold: 25
+  motion_min_area: 0.02
+  global_change_ratio: 0.45
+  warmup_frames: 15
+  global_reset_cooldown: 5
+
+face:
+  det_size: [320, 320]
+  min_face_px: 60
+  threshold: 0.5
+  consecutive_frames: 3
+  recognition_interval_recording: 0.5
+
+recording:
+  pre_seconds: 5
+  post_seconds: 5
+  max_recordings_gb: 10
+  disk_check_interval_seconds: 60
+  queue_size: 240
+  mux_audio: true
+  max_seconds: 120
+
+person_tracking:
+  enabled: true
+  model: yolov8n.pt
+  person_fps: 8
+  person_conf: 0.4
+  imgsz: 416
+  track_lost_grace_seconds: 3
+
+resilience:
+  camera_fail_threshold: 10
+  camera_reconnect_seconds: 5
+  min_free_gb: 1
+  graceful_shutdown_timeout: 10
+
+telegram:
+  token: ""                    # пусто: сеть блокирует Telegram, шлём через сервер
+  chat_ids:
+    - '5318264825'
+    - '1580773550'
+  cooldown_seconds: 30
+  retry_base_seconds: 5
+  retry_max_attempts: 3
+  ffmpeg_path: ffmpeg
+  telegram_max_mb: 49
+  send_photo: true
+  send_video: true
+
+audio:
+  enabled: true
+  samplerate: 16000
+  channels: 1
+  device: null
+  segment_seconds: 5
+  buffer_seconds: 60
+
+system:
+  prevent_sleep: true
+
+server:
+  enabled: true
+  url: "{server_url}"
+  token: "{server_token}"
+  verify_tls: false
+  camera: "home"
+"""
+
+
+@app.get("/setup/config.yaml")
+@requires_auth
+def setup_config():
+    body = CONFIG_TEMPLATE.format(
+        server_url=PUBLIC_URL or "https://SERVER:8080",
+        server_token=TOKEN,
+    )
+    return Response(body, mimetype="application/x-yaml",
+                    headers={"Content-Disposition": 'attachment; filename="config.yaml"'})
 
 
 @app.get("/")

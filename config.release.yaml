@@ -1,0 +1,73 @@
+camera:
+  device_id: 0                 # 0 — первая камера; если не та — 1 или 2
+
+motion:
+  process_fps: 8
+  resize_width: 320
+  history: 300
+  var_threshold: 25
+  motion_min_area: 0.02
+  global_change_ratio: 0.45
+  warmup_frames: 15
+  global_reset_cooldown: 5
+
+face:
+  det_size: [320, 320]
+  min_face_px: 60
+  threshold: 0.5
+  consecutive_frames: 3
+  recognition_interval_recording: 0.5
+
+recording:
+  pre_seconds: 5
+  post_seconds: 5
+  max_recordings_gb: 10
+  disk_check_interval_seconds: 60
+  queue_size: 240
+  mux_audio: true
+  max_seconds: 120
+
+person_tracking:
+  enabled: true
+  model: yolov8n.pt
+  person_fps: 8
+  person_conf: 0.4
+  imgsz: 416
+  track_lost_grace_seconds: 3
+
+resilience:
+  camera_fail_threshold: 10
+  camera_reconnect_seconds: 5
+  min_free_gb: 1
+  graceful_shutdown_timeout: 10
+
+telegram:
+  token: ""                    # пусто: сеть блокирует Telegram, шлём через сервер
+  chat_ids:
+    - '5318264825'
+    - '1580773550'
+  cooldown_seconds: 30
+  retry_base_seconds: 5
+  retry_max_attempts: 3
+  ffmpeg_path: ffmpeg
+  telegram_max_mb: 49
+  send_photo: true
+  send_video: true
+
+audio:
+  enabled: true
+  samplerate: 16000
+  channels: 1
+  device: null
+  segment_seconds: 5
+  buffer_seconds: 60
+
+system:
+  prevent_sleep: true
+
+server:
+  enabled: true
+  url: "__SERVER_URL__"
+  token: "__SERVER_TOKEN__"
+  verify_tls: false
+  camera: "home"
