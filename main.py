@@ -91,7 +91,9 @@ def check_pid_file(logger: logging.Logger) -> bool:
         os.kill(old_pid, 0)
         logger.error(f"Другой экземпляр уже запущен (PID {old_pid}). Выход.")
         return False
-    except (ProcessLookupError, PermissionError, OSError):
+    except Exception:
+        # На Windows os.kill для мёртвого PID может бросить SystemError/WinError 6,
+        # а не OSError — считаем это «процесса нет» и снимаем блокировку.
         PID_FILE.unlink(missing_ok=True)
         return True
 
