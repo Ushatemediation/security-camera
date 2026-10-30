@@ -28,6 +28,10 @@ from paths import resolve_ffmpeg
 # Базовый адрес Telegram Bot API (метод добавляется к нему).
 TG_API = "https://api.telegram.org"
 
+# На Windows дочерний процесс (ffmpeg) из приложения БЕЗ консоли открывает
+# собственное окно консоли. CREATE_NO_WINDOW это подавляет.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+
 # Префиксы временных файлов, которые создаёт нотификатор и должен удалять сам.
 TEMP_PREFIXES = ("_h264_", "_av_", "_h264_low_")
 
@@ -377,7 +381,7 @@ class TelegramNotifier:
             str(out),
         ]
         try:
-            subprocess.run(cmd, check=True, capture_output=True, timeout=180)
+            subprocess.run(cmd, check=True, capture_output=True, timeout=180, creationflags=_NO_WINDOW)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             self.logger.error(f"Микширование аудио не удалось: {e}")
             return video_path
@@ -403,7 +407,7 @@ class TelegramNotifier:
             str(out),
         ]
         try:
-            subprocess.run(cmd, check=True, capture_output=True, timeout=180)
+            subprocess.run(cmd, check=True, capture_output=True, timeout=180, creationflags=_NO_WINDOW)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             self.logger.error(f"Перекодирование в H.264 не удалось: {e}")
             return path
@@ -433,7 +437,7 @@ class TelegramNotifier:
             str(out),
         ]
         try:
-            subprocess.run(cmd, check=True, capture_output=True, timeout=180)
+            subprocess.run(cmd, check=True, capture_output=True, timeout=180, creationflags=_NO_WINDOW)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             self.logger.error(f"Сжатие по битрейту не удалось: {e}")
             return None
@@ -447,7 +451,7 @@ class TelegramNotifier:
             return 0.0
         cmd = [self.ffmpeg_path, "-i", str(path)]
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, creationflags=_NO_WINDOW)
             for line in r.stderr.splitlines():
                 if "Duration:" in line:
                     part = line.split("Duration:")[1].split(",")[0].strip()
