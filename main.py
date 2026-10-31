@@ -21,6 +21,7 @@ import yaml
 
 from audio import AudioRecorder
 from keepawake import KeepAwake
+from camwatch import CameraWatcher
 from notifier import TelegramNotifier
 from paths import APP_DIR, find_resource, resolve_ffmpeg
 from uploader import ArchiveUploader
@@ -655,6 +656,9 @@ def main():
     # Выгрузка готовых записей на сервер-архив (веб-галерея). Опция server.*
     archive = ArchiveUploader(cfg.get("server", {}) or {}, logger, stop_event)
     notifier.on_ready = archive.upload_video
+
+    # Наблюдение: кто ещё на этом ПК держит камеру (журнал доступа Windows)
+    CameraWatcher(logger, stop_event).start()
 
     mot = cfg["motion"]
     bg = cv2.createBackgroundSubtractorMOG2(
