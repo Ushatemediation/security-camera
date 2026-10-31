@@ -28,6 +28,7 @@ dist/HomeCamera/HomeCamera --preview       # окно превью
 dist/HomeCamera/HomeCamera --source clip.mp4   # тест на файле, без камеры
 dist/HomeCamera/HomeCamera selftest        # проверка Telegram
 dist/HomeCamera/HomeCamera camwatch --once # кто ещё держит камеру (Windows)
+dist/HomeCamera/HomeCamera camwatch --parallel  # делится ли камера с другими приложениями
 dist/HomeCamera/HomeCamera --version       # версия сборки
 ```
 
@@ -46,7 +47,7 @@ dist/HomeCamera/HomeCamera --version       # версия сборки
 
 ```bat
 build.bat          :: venv + зависимости + pyinstaller + сборка dist\HomeCamera\
-PACK_RELEASE.bat   :: упаковать в dist\HomeCamera_v2.0_Windows.zip
+PACK_RELEASE.bat   :: упаковать в dist\HomeCamera_v2.1_Windows.zip
 ```
 
 `ffmpeg.exe` **вшит в сборку** (пакет `imageio-ffmpeg`): вручную ничего скачивать не
@@ -61,10 +62,10 @@ PACK_RELEASE.bat   :: упаковать в dist\HomeCamera_v2.0_Windows.zip
 ставит Python, зависимости, качает `yolov8n.pt` и `ffmpeg.exe`, собирает
 `HomeCamera.spec` и выкладывает артефакт `HomeCamera_v2.0_Windows`.
 
-Запуск: **Actions → build-windows → Run workflow** (или просто пуш в `main`, или тег `v2.0`).
-Робот собирает приложение и пакует **`HomeCamera_v2.0_Windows.zip`**:
+Запуск: **Actions → build-windows → Run workflow** (или просто пуш в `main`, или тег `v2.1`).
+Робот собирает приложение и пакует **`HomeCamera_v2.1_Windows.zip`**:
 
-- артефакт `HomeCamera_v2.0_Windows` — скачивается со страницы запуска;
+- артефакт `HomeCamera_v2.1_Windows` — скачивается со страницы запуска;
 - на теге `v*` ZIP дополнительно прикрепляется к **GitHub Release** (прямая ссылка).
 
 Внутри ZIP (после распаковки — папка `HomeCamera\`):

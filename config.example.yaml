@@ -82,11 +82,17 @@ system:
   prevent_sleep: true
 
 led:
-  # Подсветка камеры Logitech (C922/C920) через UVC — только для macOS/Linux.
-  # На Windows подсветкой управляет драйвер камеры (горит во время записи),
-  # поэтому здесь по умолчанию выключено: ничего не требует и не мешает.
-  enabled: false
-  mode: 0                  # 0 — выключено, 1 — включено, 2 — авто
+  # Индикатор камеры Logitech. На Windows гасится ЧЕРЕЗ ДРАЙВЕР камеры
+  # (DirectShow → IKsControl → UVC XU unit 11, selector 9): драйвер не меняется,
+  # камера продолжает работать в Zoom/браузере/нашем софте. На macOS/Linux —
+  # тот же XU-контрол через pyusb.
+  # Сторож (suppress) повторяет команду каждые guard_seconds, поэтому индикатор
+  # остаётся погашенным даже когда поток открыло другое приложение.
+  enabled: true
+  mode: 0                  # 0 — выкл, 1 — вкл, 2 — авто
+  suppress: true           # держать погашенным в любом приложении
+  guard_seconds: 2
+  use_driver: true         # Windows: не заменять драйвер (DirectShow-путь)
   device: null             # idProduct, если несколько камер Logitech (C922: 0x085c)
 
 server:

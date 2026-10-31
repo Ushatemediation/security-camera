@@ -264,12 +264,81 @@ def test_ffmpeg_selfcontained():
     print("ffmpeg: вшит в приложение (imageio-ffmpeg) = OK")
 
 
+def test_led_windows_layout():
+    """led_win: структура KS-запроса и payload для UVC XU (unit 11 / selector 9)."""
+    import ctypes
+    import uuid as _uuid
+
+    import led_win as W
+
+    assert ctypes.sizeof(W.KSPROPERTY) == 24, ctypes.sizeof(W.KSPROPERTY)
+    assert ctypes.sizeof(W.KSP_NODE) == 28, ctypes.sizeof(W.KSP_NODE)
+    assert W._payload(0x00) == b"\x03\x00\x01\x00\x01"
+    assert W._payload(0x03) == b"\x03\x00\x01\x03\x01"
+    raw = bytes(W._guid(W.XU_GUID_C920))
+    assert raw == _uuid.UUID(W.XU_GUID_C920).bytes_le, raw.hex()
+    assert (W.XU_UNIT_ID, W.XU_SELECTOR) == (0x0B, 0x09)
+    print("led_win: KS-структуры и payload (unit 11, selector 9) = OK")
+
+
+def test_led_guard():
+    """Сторож LED гасит индикатор повторно, даже если его включили снова."""
+    import led_control as LC
+    from led_control import LogitechLEDController
+
+    class FakeWin:
+        def __init__(self):
+            self.calls = []
+
+        def set_led_mode(self, mode, logger=None):
+            self.calls.append(mode)
+            return True
+
+        def get_led_mode(self, logger=None):
+            return 0
+
+    fake = FakeWin()
+    old = LC.led_win
+    LC.led_win = fake
+    try:
+        led = LogitechLEDController(
+            log, {"enabled": True, "suppress": True, "guard_seconds": 0.05}
+        )
+        led._connected = True
+        led.backend = "dshow"
+        led.start_guard()
+        time.sleep(0.18)
+        led.stop_guard()
+        assert len(fake.calls) >= 2, fake.calls
+        assert set(fake.calls) == {0}, fake.calls
+    finally:
+        LC.led_win = old
+    print(f"LEDGuard: индикатор гасится повторно ({len(fake.calls)} раза) = OK")
+
+
+def test_camwatch_exceptions():
+    """Наш софт и процессы Windows не считаются «чужими» на камере."""
+    import camera_watcher
+    import camwatch
+
+    assert camwatch.is_exception("HomeCamera.exe")
+    assert camwatch.is_exception("svchost.exe")
+    assert not camwatch.is_exception("Zoom.exe")
+    assert camera_watcher.is_exception("audiodg.exe")
+    assert not camera_watcher.is_exception("obs64.exe")
+    assert callable(camera_watcher.parallel_check)
+    print("Исключения камеры: наш софт/Windows пропускаются = OK")
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.WARNING, format="%(message)s")
     test_state_enum()
     test_pipeline_state_machine()
     test_writer_cfr_padding()
     test_ffmpeg_selfcontained()
+    test_led_windows_layout()
+    test_led_guard()
+    test_camwatch_exceptions()
     test_sendjob_contract()
     test_sendjob_archive_without_telegram()
     test_retry_survives_shutdown()

@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.1.0
+
+### Новое
+
+- **Гашение индикатора камеры на Windows без замены драйвера** — `led_win.py`:
+  DirectShow → `IKsControl` → UVC Extension Unit (unit 11, selector 9). Драйвер
+  камеры остаётся штатным, поэтому картинка работает во всех приложениях.
+  Сторож `LEDGuard` повторяет команду каждые `led.guard_seconds` — индикатор
+  остаётся погашенным и тогда, когда поток открыл Zoom/браузер. Наш софт и
+  внутренние процессы Windows в счёт не идут (список исключений).
+- **Проверка параллельной работы камеры**: `camera_watcher.py --parallel`
+  (в exe: `HomeCamera.exe camwatch --parallel`) — кто держит камеру, откроется
+  ли поток вторым клиентом и с каким fps.
+- **Запуск без окна консоли**: `START_CAMERA.vbs` (wscript, скрытое окно);
+  `START_CAMERA.bat` делегирует ему запуск. Все подпроцессы (ffmpeg) и раньше
+  шли с `CREATE_NO_WINDOW`.
+- **Исключения «своих»**: `camwatch.is_exception()` — HomeCamera/python и
+  системные процессы (svchost, csrss, dwm, audiodg и т.п.) не считаются чужими.
+
 ## 2.0.0 — Windows Release
 
 ### Новое

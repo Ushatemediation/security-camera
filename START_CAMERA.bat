@@ -26,7 +26,12 @@ if not exist config.yaml (
 )
 
 echo Запускаю: !EXE!
-start "" "!EXE!"
+rem Запуск БЕЗ окна консоли: через VBS (wscript — GUI-подсистема, чёрного окна нет).
+if exist "%~dp0START_CAMERA.vbs" (
+    start "" /b wscript //nologo "%~dp0START_CAMERA.vbs"
+) else (
+    start "" "!EXE!"
+)
 echo.
 echo   ✓ Камера работает в фоне.
 echo   Логи:        logs\app.log

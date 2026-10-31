@@ -5,16 +5,18 @@
 
 Есть **готовый архив для Windows — ставить ничего не нужно** (Python не требуется).
 
-## 🆕 Release 2.0 (Windows)
+## 🆕 Release 2.1 (Windows)
 
-Скачать: **[Releases](../../releases)** → `HomeCamera_v2.0_Windows.zip` → распаковать →
-вписать токен в `config.yaml` → `START_CAMERA.bat`.
+Скачать: **[Releases](../../releases)** → `HomeCamera_v2.1_Windows.zip` → распаковать →
+вписать токен в `config.yaml` → запустить **`START_CAMERA.vbs`** (работает без окна консоли).
 
+- **Индикатор камеры гаснет** — на Windows через драйвер камеры (DirectShow → `IKsControl`), драйвер не меняется; сторож `LEDGuard` держит его выключенным в любом приложении. Наш софт и системные процессы Windows — в исключениях.
+- **Проверка параллельной работы**: `HomeCamera.exe camwatch --parallel` — кто держит камеру и откроется ли поток вторым клиентом (с fps).
+- **Консоль не появляется**: `START_CAMERA.vbs` (wscript, скрытое окно), подпроцессы ffmpeg — с `CREATE_NO_WINDOW`.
 - **Стейт-машина**: запись → склейка → отправка идут внутри программы (`Pipeline`), без внешних вызовов.
 - **Синхрон A/V**: CFR-таймлайн с дублями кадров — «дёргание» и «плывущий» звук исправлены, тонкая подстройка `audio.sync_offset_ms`.
-- **LED камеры Logitech** (UVC): `led.mode: 0/1/2`; на Windows без WinUSB-драйвера просто не включается — запись не страдает.
 - **Мониторинг камеры**: `HomeCamera.exe camwatch --once` — кто ещё держит камеру (реестр ConsentStore).
-- **Диагностика**: в логах параметры камеры (разрешение/fps/fourcc) и разбор каждой записи (кадры, длительность, дубли, дропы).
+- **ffmpeg вшит** — ничего скачивать не нужно.
 
 ---
 
@@ -143,9 +145,9 @@ make cpu        # CPU в простое   make enroll    # распознать 
 
 ### Сборка standalone-релиза (PyInstaller)
 - macOS: `./build_mac.sh` → `dist/HomeCamera/`
-- Windows: `build.bat` → `PACK_RELEASE.bat` → `HomeCamera_v2.0_Windows.zip`
+- Windows: `build.bat` → `PACK_RELEASE.bat` → `HomeCamera_v2.1_Windows.zip`
 - Без своего Windows: **GitHub Actions → `build-windows` → Run workflow** (или пуш тега `v*`) —
-  робот соберёт `HomeCamera_v2.0_Windows.zip` и выложит в артефакт/Release.
+  робот соберёт `HomeCamera_v2.1_Windows.zip` и выложит в артефакт/Release.
 
 Подробности — `docs/BUILD.md`.
 

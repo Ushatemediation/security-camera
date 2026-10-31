@@ -42,7 +42,7 @@ try:
 except Exception:
     pass
 
-hiddenimports += ["cv2", "yaml", "requests", "numpy", "camera_watcher", "version"]
+hiddenimports += ["cv2", "yaml", "requests", "numpy", "camera_watcher", "version", "led_win"]
 
 a = Analysis(
     ["launcher.py"],

@@ -51,7 +51,9 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
+import threading
 import time
 import uuid
 
@@ -61,6 +63,11 @@ try:
     import usb.backend.libusb1  # noqa: F401 — прогреваем поиск libusb
 except ImportError:  # pyusb не установлен: модуль остаётся импортируемым
     usb = None
+
+try:  # Windows: управление LED через драйвер камеры (DirectShow/KsProperty)
+    import led_win
+except Exception:  # pragma: no cover — модуль не критичен
+    led_win = None
 
 LOGITECH_VENDOR_ID = 0x046D
 C922_PRODUCT_ID = 0x085C  # Logitech C922 Pro Stream Webcam
@@ -118,6 +125,9 @@ class LogitechLEDController:
         self.variant = "logitech_xu_v2"  # или "legacy_led1"
         self._current_raw = None         # последний прочитанный payload (GET_CUR)
         self._connected = False
+        self.backend = "usb"             # "usb" (pyusb) или "dshow" (Windows-драйвер)
+        self._guard: threading.Thread | None = None
+        self._guard_stop = threading.Event()
 
     # ---------------------------------------------------------------- API --
 
@@ -126,7 +136,26 @@ class LogitechLEDController:
         return self._connected
 
     def connect(self) -> bool:
-        """Найти камеру Logitech и определить контрол LED. True при успехе."""
+        """Найти камеру Logitech и определить контрол LED. True при успехе.
+
+        На Windows сначала пробуем штатный путь через драйвер камеры
+        (led_win / DirectShow): он не ломает камеру в других приложениях.
+        Если не вышло — откатываемся на pyusb (macOS/Linux).
+        """
+        if os.name == "nt" and led_win is not None and bool(self.cfg.get("use_driver", True)):
+            try:
+                if led_win.probe(self.logger):
+                    self.backend = "dshow"
+                    self._connected = True
+                    self.logger.info(
+                        "LED Logitech: управление через драйвер камеры "
+                        "(DirectShow/KsProperty, без замены драйвера)"
+                    )
+                    return True
+                self.logger.info("LED Logitech: драйвер камеры не принял XU-команду")
+            except Exception as e:
+                self.logger.warning(f"LED Logitech: DirectShow-путь недоступен: {e}")
+
         if usb is None:
             self.logger.warning(
                 "LED Logitech: pyusb не установлен (pip install pyusb) — "
@@ -157,6 +186,19 @@ class LogitechLEDController:
         """
         if not self._connected:
             return False
+
+        if self.backend == "dshow":
+            try:
+                ok = led_win.set_led_mode(mode, self.logger)
+                if ok:
+                    self.logger.info(
+                        f"LED (драйвер): режим {mode} ({MODE_NAMES.get(mode, '?')}) установлен"
+                    )
+                return ok
+            except Exception as e:
+                self.logger.warning(f"LED (драйвер): ошибка установки режима: {e}")
+                return False
+
         if raw_state is None and mode not in self.mode_map:
             raise ValueError(
                 f"mode должен быть одним из {sorted(self.mode_map)}, а не {mode!r}"
@@ -206,6 +248,11 @@ class LogitechLEDController:
         """Текущий режим (0/1/2) или None, если прочитать не удалось."""
         if not self._connected:
             return None
+        if self.backend == "dshow":
+            try:
+                return led_win.get_led_mode(self.logger)
+            except Exception:
+                return None
         raw = self._get_cur()
         if raw is None:
             return None
@@ -235,6 +282,8 @@ class LogitechLEDController:
                     f"LED Logitech: режим «{MODE_NAMES.get(mode, mode)}» (mode={mode}) "
                     "успешно установлен"
                 )
+                # Держим индикатор погашенным, даже когда камеру снимают другие приложения.
+                self.start_guard()
             else:
                 self.logger.warning("LED Logitech: не удалось установить режим подсветки (не критично)")
             return ok
@@ -242,8 +291,41 @@ class LogitechLEDController:
             self.logger.warning(f"LED Logitech: ошибка управления подсветкой: {e}")
             return False
 
+    def start_guard(self, interval: float | None = None) -> None:
+        """Сторож: держать индикатор погашенным, пока камера вообще работает.
+
+        Работает и тогда, когда поток открыло другое приложение (Zoom/браузер):
+        SET_CUR уходит через драйвер камеры, а не через монопольный USB-доступ.
+        """
+        if not self._connected or self.backend != "dshow":
+            return
+        if not bool(self.cfg.get("suppress", True)):
+            return
+        if self._guard is not None and self._guard.is_alive():
+            return
+        period = float(interval or self.cfg.get("guard_seconds") or 2.0)
+        self._guard_stop.clear()
+
+        def loop():
+            while not self._guard_stop.wait(period):
+                try:
+                    led_win.set_led_mode(0, self.logger)
+                except Exception:
+                    pass
+
+        self._guard = threading.Thread(target=loop, name="LEDGuard", daemon=True)
+        self._guard.start()
+        self.logger.info(
+            f"LED Logitech: сторож активен — индикатор гасится каждые {period:g} с "
+            "(в любом приложении)"
+        )
+
+    def stop_guard(self) -> None:
+        self._guard_stop.set()
+
     def close(self) -> None:
         """Отпустить USB-устройство (вызывать при завершении программы)."""
+        self.stop_guard()
         if self.dev is not None and usb is not None:
             try:
                 usb.util.dispose_resources(self.dev)
@@ -254,6 +336,7 @@ class LogitechLEDController:
 
     def shutdown(self) -> None:
         """Завершение программы: гасим подсветку (best-effort) и отпускаем USB."""
+        self.stop_guard()
         if self._connected:
             try:
                 self.set_led_mode(0)

@@ -181,6 +181,79 @@ def global_consent():
     return result
 
 
+# --- «все исключения»: наш софт и внутренние процессы Windows ----------------
+
+EXCEPTIONS = {
+    "homecamera.exe", "homecamera", "hc.exe", "main.py", "launcher.py",
+    "python.exe", "pythonw.exe", "python3.exe",
+    "svchost.exe", "system", "registry", "smss.exe", "csrss.exe", "wininit.exe",
+    "winlogon.exe", "services.exe", "lsass.exe", "dwm.exe", "audiodg.exe",
+    "fontdrvhost.exe", "runtimebroker.exe", "searchhost.exe",
+}
+
+
+def is_exception(name: str) -> bool:
+    """True, если это наш софт или внутренний процесс Windows."""
+    return name.strip().lower() in EXCEPTIONS
+
+
+def foreign_consumers(skip: set[str] | None = None):
+    """Активные потребители камеры без нашего софта и системных процессов."""
+    skip = {s.lower() for s in (skip or set())}
+    return [
+        app for app in scan_consumers(active_only=True)
+        if not is_exception(app["name"]) and app["name"].lower() not in skip
+    ]
+
+
+def parallel_check(seconds: float = 3.0, skip: set[str] | None = None) -> int:
+    """Работает ли камера параллельно с другими приложениями.
+
+    Печатает, кто держит камеру (с исключениями), затем пробует открыть поток
+    вторым клиентом и посчитать частоту кадров. Код возврата: 0 — камера
+    делится, 1 — занята/поток не идёт, 2 — нет opencv.
+    """
+    print("=== Кто держит камеру (реестр ConsentStore) ===")
+    try:
+        active = [u for u in scan_consumers(active_only=False) if u["in_use"]]
+    except Exception as e:
+        print(f"[!] журнал недоступен: {e}")
+        active = []
+    if not active:
+        print("  камеру сейчас никто не держит")
+    for u in active:
+        mark = "наш/системный (исключение)" if is_exception(u["name"]) else "ДРУГОЕ ПРИЛОЖЕНИЕ"
+        print(f"  {u['name']:<34} {mark}")
+    skip_l = {s.lower() for s in (skip or set())}
+    foreign = [u for u in active if not is_exception(u["name"]) and u["name"].lower() not in skip_l]
+    print(f"  чужих потребителей: {len(foreign)}")
+
+    print(f"\n=== Открываю камеру вторым клиентом ({seconds:g} с) ===")
+    try:
+        import cv2
+    except ImportError:
+        print("[!] opencv не установлен — проверка невозможна")
+        return 2
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW) if sys.platform == "win32" else cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("  камера НЕ открылась: устройство занято монопольно")
+        return 1
+    t0, frames = time.time(), 0
+    while time.time() - t0 < seconds:
+        ok, _ = cap.read()
+        if not ok:
+            break
+        frames += 1
+    fps = frames / max(time.time() - t0, 1e-6)
+    cap.release()
+    print(f"  открылась: ДА, кадров {frames}, ≈{fps:.1f} fps")
+    if fps > 1:
+        print("  вердикт: камера делится между приложениями")
+        return 0
+    print("  вердикт: поток открылся, но кадры не идут")
+    return 1
+
+
 # ------------------------------------------------------- события/цикл --
 
 def _fmt(app: dict) -> str:
@@ -263,7 +336,14 @@ def main(argv=None) -> int:
                     metavar="ИМЯ", help="не учитывать это приложение (можно несколько)")
     ap.add_argument("--demo", action="store_true",
                     help="демо логики без Windows (macOS/Linux)")
-    args = ap.parse_args(argv)
+    ap.add_argument("--parallel", action="store_true",
+                    help="проверить, работает ли камера параллельно с другими приложениями")
+    ap.add_argument("--seconds", type=float, default=3.0,
+                    help="длительность пробы камеры для --parallel, сек")
+    args = ap.parse_args()
+
+    if args.parallel:
+        return parallel_check(seconds=args.seconds, skip=set(args.skip))
 
     if args.demo:
         demo()

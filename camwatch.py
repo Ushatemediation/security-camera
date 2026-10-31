@@ -90,6 +90,26 @@ def active_users():
     return now
 
 
+# Наш софт и внутренние процессы Windows не считаются «чужими» потребителями.
+EXCEPTIONS = {
+    "homecamera.exe", "homecamera", "hc.exe", "main.py", "launcher.py",
+    "python.exe", "pythonw.exe", "python3.exe",
+    "svchost.exe", "system", "registry", "smss.exe", "csrss.exe", "wininit.exe",
+    "winlogon.exe", "services.exe", "lsass.exe", "dwm.exe", "audiodg.exe",
+    "fontdrvhost.exe", "runtimebroker.exe", "searchhost.exe",
+}
+
+
+def is_exception(name: str) -> bool:
+    """True, если приложение — наш софт или внутренний процесс Windows."""
+    return name.strip().lower() in EXCEPTIONS
+
+
+def foreign_users():
+    """Кто держит камеру сейчас — кроме нашего софта и системных процессов."""
+    return [(name, when) for name, when in active_users() if not is_exception(name)]
+
+
 class CameraWatcher(threading.Thread):
     """Фоновый поток: сообщает, когда камеру заняло/освободило другое приложение."""
 
@@ -108,7 +128,8 @@ class CameraWatcher(threading.Thread):
 
         while not self.stop_event.is_set():
             try:
-                users = {name: when for name, when in active_users()}
+                users = {name: when for name, when in active_users()
+                         if not is_exception(name)}
             except Exception as e:
                 self.logger.debug(f"CameraWatcher: ошибка чтения реестра: {e}")
                 users = {}
