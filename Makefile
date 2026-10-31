@@ -3,7 +3,7 @@
 #   make help      — список команд
 #   make run       — запустить камеру (headless)
 #   make preview   — запустить с окном превью
-#   make test      — прогнать автотесты
+#   make test      — прогнать автотесты (этапы 2 и 5)
 #   make cpu       — замерить CPU в простое
 #   make enroll    — зарегистрировать лица из known/
 #   make setup     — создать venv и поставить зависимости
@@ -17,7 +17,7 @@ help:
 	@echo "Доступные команды:"
 	@echo "  make run       запустить камеру (headless)"
 	@echo "  make preview   запустить с окном превью"
-	@echo "  make test      автотесты (этап 2)"
+	@echo "  make test      автотесты (этапы 2 и 5)"
 	@echo "  make selftest  проверить Telegram (фото + видео со звуком)"
 	@echo "  make cpu       CPU в простое (30s)"
 	@echo "  make enroll    распознать лица из known/"
@@ -32,6 +32,7 @@ preview:
 
 test:
 	PYTHONPATH=. $(PY) tests/test_stage2.py
+	PYTHONPATH=. $(PY) tests/test_stage5.py
 
 selftest:
 	$(PY) selftest.py

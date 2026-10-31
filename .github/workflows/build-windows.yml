@@ -95,18 +95,18 @@ jobs:
           Write-Host "=== Содержимое релиза ==="
           Get-ChildItem $rel | Select-Object Name
 
-      - name: Упаковать HomeCamera_Windows.zip
+      - name: Упаковать HomeCamera_v2.0_Windows.zip
         shell: pwsh
         run: |
-          Compress-Archive -Path "release\HomeCamera" -DestinationPath "HomeCamera_Windows.zip" -Force
-          Get-Item HomeCamera_Windows.zip | Select-Object Name, @{n="MB";e={[math]::Round($_.Length/1MB,1)}}
+          Compress-Archive -Path "release\HomeCamera" -DestinationPath "HomeCamera_v2.0_Windows.zip" -Force
+          Get-Item HomeCamera_v2.0_Windows.zip | Select-Object Name, @{n="MB";e={[math]::Round($_.Length/1MB,1)}}
 
       - name: Артефакт (скачать со страницы запуска)
         uses: actions/upload-artifact@v4
         with:
           # отдаём ПАПКУ: скачанный с GitHub архив HomeCamera_Windows.zip
           # сразу содержит приложение (без «zip внутри zip»)
-          name: HomeCamera_Windows
+          name: HomeCamera_v2.0_Windows
           path: release/HomeCamera
           if-no-files-found: error
 
@@ -114,5 +114,5 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: HomeCamera_Windows.zip
+          files: HomeCamera_v2.0_Windows.zip
           generate_release_notes: true

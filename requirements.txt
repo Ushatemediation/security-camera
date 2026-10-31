@@ -6,4 +6,6 @@ pyyaml==6.0.1
 requests==2.31.0
 ultralytics==8.4.175
 sounddevice==0.5.6
-# ffmpeg — внешний бинарник (см. README), не pip-пакет
+pyusb==1.2.1
+# ffmpeg вшит в пакет: бинарь приезжает внутри wheel'а, ставить вручную не нужно.
+imageio-ffmpeg>=0.5.1

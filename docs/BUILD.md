@@ -27,6 +27,8 @@ dist/HomeCamera/HomeCamera enroll          # распознать лица из 
 dist/HomeCamera/HomeCamera --preview       # окно превью
 dist/HomeCamera/HomeCamera --source clip.mp4   # тест на файле, без камеры
 dist/HomeCamera/HomeCamera selftest        # проверка Telegram
+dist/HomeCamera/HomeCamera camwatch --once # кто ещё держит камеру (Windows)
+dist/HomeCamera/HomeCamera --version       # версия сборки
 ```
 
 Важно: рядом с бинарником должен лежать `config.yaml` (создаётся скриптом из
@@ -44,11 +46,12 @@ dist/HomeCamera/HomeCamera selftest        # проверка Telegram
 
 ```bat
 build.bat          :: venv + зависимости + pyinstaller + сборка dist\HomeCamera\
-PACK_RELEASE.bat   :: упаковать в dist\HomeCamera_v1.0_Windows.zip
+PACK_RELEASE.bat   :: упаковать в dist\HomeCamera_v2.0_Windows.zip
 ```
 
-Перед `PACK_RELEASE.bat` положите `ffmpeg.exe` рядом с `build.bat` (скачать:
-https://www.gyan.dev/ffmpeg/builds/ → «essentials») — он попадёт в сборку.
+`ffmpeg.exe` **вшит в сборку** (пакет `imageio-ffmpeg`): вручную ничего скачивать не
+нужно. Свой `ffmpeg.exe` рядом с `build.bat` по-прежнему имеет приоритет (быстрее
+стартует), но без него всё работает.
 
 ---
 
@@ -56,12 +59,12 @@ https://www.gyan.dev/ffmpeg/builds/ → «essentials») — он попадёт 
 
 В репозитории есть `.github/workflows/build-windows.yml`. Он сам:
 ставит Python, зависимости, качает `yolov8n.pt` и `ffmpeg.exe`, собирает
-`HomeCamera.spec` и выкладывает артефакт `HomeCamera-windows`.
+`HomeCamera.spec` и выкладывает артефакт `HomeCamera_v2.0_Windows`.
 
-Запуск: **Actions → build-windows → Run workflow** (или просто пуш в `main`, или тег `v1.0`).
-Робот собирает приложение и пакует **`HomeCamera_Windows.zip`**:
+Запуск: **Actions → build-windows → Run workflow** (или просто пуш в `main`, или тег `v2.0`).
+Робот собирает приложение и пакует **`HomeCamera_v2.0_Windows.zip`**:
 
-- артефакт `HomeCamera_Windows` — скачивается со страницы запуска;
+- артефакт `HomeCamera_v2.0_Windows` — скачивается со страницы запуска;
 - на теге `v*` ZIP дополнительно прикрепляется к **GitHub Release** (прямая ссылка).
 
 Внутри ZIP (после распаковки — папка `HomeCamera\`):

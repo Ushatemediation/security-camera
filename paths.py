@@ -10,6 +10,10 @@
 
 ``find_resource`` ищет сначала рядом с exe (чтобы пользователь мог подменить
 файл), затем внутри бандла.
+
+ffmpeg **не нужно ставить вручную**: пакет ``imageio-ffmpeg`` везёт бинарь внутри
+себя (и он попадает в PyInstaller-сборку), поэтому достаточно ``pip install -r
+requirements.txt``. Свой ffmpeg рядом с exe по-прежнему имеет приоритет.
 """
 
 import os
@@ -36,10 +40,24 @@ def find_resource(*names: str) -> Path | None:
     return None
 
 
-def resolve_ffmpeg(value: str | None) -> str:
-    """Путь к ffmpeg.
+def _imageio_ffmpeg() -> str | None:
+    """ffmpeg из пакета ``imageio-ffmpeg`` (бинарь внутри колеса, ставить нечего)."""
+    try:
+        import imageio_ffmpeg  # ленивый импорт: нужен только при отсутствии своего бинаря
 
-    Приоритет: явный путь из конфига -> ffmpeg(.exe) рядом с exe/в бандле -> PATH.
+        path = imageio_ffmpeg.get_ffmpeg_exe()
+        if path and Path(path).exists():
+            return path
+    except Exception:
+        pass
+    return None
+
+
+def resolve_ffmpeg(value: str | None) -> str:
+    """Путь к ffmpeg — всегда рабочий, без ручной установки.
+
+    Приоритет: явный путь из конфига → ffmpeg(.exe) рядом с exe/в бандле →
+    ffmpeg в PATH → бинарь из пакета ``imageio-ffmpeg``.
     """
     if value and value not in ("ffmpeg", "ffmpeg.exe"):
         return value
@@ -47,10 +65,16 @@ def resolve_ffmpeg(value: str | None) -> str:
     found = find_resource(exe)
     if found is not None:
         return str(found)
-    return value or "ffmpeg"
+    name = value or "ffmpeg"
+    if shutil.which(name):
+        return name
+    bundled = _imageio_ffmpeg()
+    if bundled:
+        return bundled
+    return name
 
 
 def ffmpeg_available(value: str | None) -> bool:
-    """Есть ли реально доступный ffmpeg (файл или в PATH)."""
+    """Есть ли реально доступный ffmpeg (файл, PATH или вшитый в пакет)."""
     resolved = resolve_ffmpeg(value)
     return bool(shutil.which(resolved) or Path(resolved).exists())

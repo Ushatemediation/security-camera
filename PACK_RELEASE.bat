@@ -2,13 +2,13 @@
 chcp 65001 >nul
 rem ============================================================================
 rem  PACK_RELEASE.bat — собрать релизный ZIP для раздачи:
-rem  HomeCamera_v1.0_Windows.zip  (exe + модели + ffmpeg + config + батники).
+rem  HomeCamera_v2.0_Windows.zip  (exe + модели + ffmpeg + config + батники).
 rem  Сначала собирает проект (build.bat), затем упаковывает.
 rem ============================================================================
 setlocal
 cd /d "%~dp0"
 
-set "VER=1.0"
+set "VER=2.0"
 set "NAME=HomeCamera_v%VER%_Windows"
 set "OUT=dist\HomeCamera"
 set "STAGE=dist\%NAME%"
@@ -26,7 +26,7 @@ if not exist "%OUT%\HomeCamera.exe" (
 
 rem 2) докладываю батники и документацию
 echo [*] Кладу в сборку батники и README...
-for %%F in (START_CAMERA.bat INSTALL_AUTOSTART.bat UNINSTALL.bat download_models.bat) do (
+for %%F in (START_CAMERA.bat INSTALL_AUTOSTART.bat UNINSTALL.bat download_models.bat ЗАПИСАТЬ.bat DIAGNOSTIC.bat) do (
     if exist "%%F" copy /y "%%F" "%OUT%\" >nul
 )
 if exist README.md copy /y README.md "%OUT%\README.md" >nul

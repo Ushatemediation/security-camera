@@ -136,7 +136,13 @@ class AudioRecorder(threading.Thread):
                     self._prune()
 
                 # --- в кольцо памяти (точный хвост, включая текущий блок) ---
-                self._push_ring(time.time(), block)
+                # Метка = НАЧАЛО блока: stream.read() отдаёт данные, когда блок уже
+                # записан, поэтому вычитаем его длительность — иначе аудиоокно
+                # вырезается со сдвигом (~21 мс на блок 1024 при 16 кГц плюс
+                # задержка устройства ввода).
+                self._push_ring(
+                    time.time() - block.shape[0] / float(self.samplerate), block
+                )
 
         except Exception as e:  # ошибка sounddevice и прочее — не валим процесс
             self.logger.error(f"AudioRecorder остановлен из-за ошибки: {e}")

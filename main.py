@@ -1,4 +1,13 @@
-"""Охранная камера: motion gate -> распознавание лица -> трекинг -> запись + Telegram."""
+"""Охранная камера: motion gate -> распознавание лица -> трекинг -> запись + Telegram.
+
+Пайплайн оформлен явной стейт-машиной (класс Pipeline ниже):
+
+    IDLE -> RECORDING -> PROCESSING (склейка ffmpeg) -> SENDING_TELEGRAM -> IDLE
+
+Переходы и отправка живут внутри самого приложения (методы Pipeline) —
+никаких внешних вызовов. LED-подсветкой камеры Logitech управляет
+led_control (UVC XU).
+"""
 
 import argparse
 import atexit
@@ -12,6 +21,7 @@ import threading
 import time
 import traceback
 from collections import deque
+from enum import Enum
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -22,9 +32,11 @@ import yaml
 from audio import AudioRecorder
 from keepawake import KeepAwake
 from camwatch import CameraWatcher
+from led_control import LogitechLEDController
 from notifier import TelegramNotifier
 from paths import APP_DIR, find_resource, resolve_ffmpeg
 from uploader import ArchiveUploader
+from version import __version__
 
 # torch >= 2.6 грузит .pt в weights_only=True и ломает загрузку весов ultralytics.
 # Этот флаг возвращает старое поведение для доверенных локальных чекпоинтов.
@@ -113,6 +125,163 @@ def remove_pid_file():
     PID_FILE.unlink(missing_ok=True)
 
 
+class State(Enum):
+    """Состояния пайплайна записи (стейт-машина основного цикла).
+
+    Штатная цепочка переходов (всё внутри цикла main(), без внешних вызовов):
+
+        IDLE ──цель в кадре──▶ RECORDING ──запись остановлена──▶ PROCESSING
+         ▲                                                            │
+         │                                   (ffmpeg: склейка аудио+видео)
+         │                                                            ▼
+         └───────── отправлено (снимок + mp4 со звуком) ──▶ SENDING_TELEGRAM
+
+    Дополнительно разрешён вход в RECORDING из PROCESSING/SENDING_TELEGRAM:
+    новая цель в кадре не ждёт, пока доедет предыдущая отправка.
+    """
+
+    IDLE = "IDLE"
+    RECORDING = "RECORDING"
+    PROCESSING = "PROCESSING"
+    SENDING_TELEGRAM = "SENDING_TELEGRAM"
+
+
+class Pipeline:
+    """Стейт-машина пайплайна записи — внутренняя подсистема main.py.
+
+    Владеет состоянием (IDLE → RECORDING → PROCESSING → SENDING_TELEGRAM),
+    очередью финализированных записей и заданиями отправки. Главный цикл лишь
+    сообщает события («запись началась/остановилась», «прошёл кадр»), а склейка
+    (ffmpeg) и отправка видео в Telegram запускаются отсюда — сменой состояния,
+    без каких-либо внешних вызовов извне программы.
+    """
+
+    def __init__(self, cfg: dict, logger, notifier, audio, finalized_q):
+        self.cfg = cfg
+        self.logger = logger
+        self.notifier = notifier
+        self.audio = audio
+        self.finalized_q = finalized_q
+
+        self.state = State.IDLE
+        self.current_job = None        # SendJob текущей записи
+        self.pending_jobs: list = []   # все незавершённые отправки
+        self.pending_snapshot = None   # (jpeg, caption) — снимок для SENDING-фазы
+        self.last_notify = 0.0         # cooldown снимков
+
+    # ---------------------------------------------------------- свойства --
+
+    @property
+    def writing(self) -> bool:
+        """Идёт ли сейчас запись (используется главным циклом)."""
+        return self.state is State.RECORDING
+
+    # ----------------------------------------------------------- события --
+
+    def _set_state(self, new_state: State, reason: str = "") -> None:
+        """Единственная точка смены состояния пайплайна (пишет лог перехода)."""
+        if new_state is self.state:
+            return
+        note = f" ({reason})" if reason else ""
+        self.logger.info(f"[STATE] {self.state.value} -> {new_state.value}{note}")
+        self.state = new_state
+
+    def on_recording_started(self, frame, ts: float) -> None:
+        """Цель в кадре: IDLE → RECORDING + снимок для фазы SENDING_TELEGRAM."""
+        self._set_state(State.RECORDING, "цель в кадре")
+        cooldown = float(self.cfg["telegram"]["cooldown_seconds"])
+        if (self.pending_snapshot is not None or not self.notifier.enabled
+                or (ts - self.last_notify) <= cooldown):
+            return
+        self.last_notify = ts
+        try:
+            ok_snap, buf = cv2.imencode(
+                ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85]
+            )
+            if ok_snap:
+                self.pending_snapshot = (
+                    buf.tobytes(),
+                    f"Цель в кадре: {time.strftime('%H:%M:%S')}",
+                )
+        except Exception as e:
+            self.logger.warning(f"Не удалось закодировать снимок: {e}")
+
+    def on_recording_finished(self, reason: str) -> None:
+        """Запись остановлена: → PROCESSING (ждём on_finalize, затем склейка)."""
+        self._set_state(State.PROCESSING, reason)
+
+    # ------------------------------------------------- обслуживание (tick) --
+
+    def tick(self) -> None:
+        """Каждый кадр: разрешаем отправку после склейки, чистим готовые задания."""
+        for job in list(self.pending_jobs):
+            if job.processing_done.is_set() and not job.go_send.is_set():
+                if job is self.current_job and self.state is State.PROCESSING:
+                    self._set_state(State.SENDING_TELEGRAM, "склейка ffmpeg завершена")
+                job.go_send.set()          # «добро» на отправку внутри нотификатора
+            if job.sending_done.is_set():
+                self.pending_jobs.remove(job)
+                self.logger.info(f"[PIPELINE] отправка завершена: {job.path.name}")
+                if job is self.current_job:
+                    self.current_job = None
+                    if self.state is State.SENDING_TELEGRAM:
+                        self._set_state(State.IDLE, "отправка завершена")
+        self._drain_finalized()
+
+    def _drain_finalized(self) -> None:
+        """finalized_q → SendJob: упаковать ВСЕ готовые записи в задания отправки.
+
+        Без привязки к состоянию: иначе запись, финализированная во время чужой
+        отправки, «повисла» бы в очереди навсегда.
+        """
+        while True:
+            try:
+                rec_path, rec_window = self.finalized_q.get_nowait()
+            except queue.Empty:
+                return
+            aw = rec_window if (self.audio.enabled and rec_window) else None
+            want_local = bool(self.cfg["recording"].get("mux_audio", True)) and aw is not None
+            snap_jpeg, snap_caption = self.pending_snapshot or (None, "")
+            self.pending_snapshot = None
+            job = self.notifier.enqueue_video_job(
+                rec_path,
+                f"Запись завершена: {rec_path.name}",
+                audio_window=aw,
+                replace_source=want_local,
+                snapshot_jpeg=snap_jpeg,
+                snapshot_caption=snap_caption,
+            )
+            self.pending_jobs.append(job)
+            if self.current_job is None:
+                self.current_job = job
+                if self.state is State.IDLE:
+                    self._set_state(State.PROCESSING, "финализированная запись в обработке")
+            self.logger.info(
+                f"[PIPELINE] {rec_path.name}: обработка началась "
+                f"(аудио: {'есть' if aw else 'нет'})"
+            )
+
+    # ----------------------------------------------------------- остановка --
+
+    def shutdown(self, writer_thread, timeout: float) -> None:
+        """Выход: дождаться финализации, упаковать остаток, разрешить отправку.
+
+        notifier.shutdown() в main() затем доработает очередь (склейка + отправка
+        + архив) — последний клип не теряется.
+        """
+        if self.state is State.RECORDING:
+            writer_thread.finish()
+            self._set_state(State.PROCESSING, "завершение программы")
+        if self.state is State.PROCESSING:
+            if not writer_thread.wait_finalized(timeout=timeout):
+                self.logger.warning(
+                    "Финализация записи не завершилась вовремя — возможна потеря хвоста"
+                )
+        self._drain_finalized()
+        for job in self.pending_jobs:
+            job.go_send.set()
+
+
 class CaptureThread(threading.Thread):
     """Читает камеру на полной скорости, последний кадр под lock."""
 
@@ -138,6 +307,20 @@ class CaptureThread(threading.Thread):
         self.fail_count = 0
         self.start_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.start_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.logger.info(
+            f"Камера открыта: {self.start_w}x{self.start_h}, "
+            f"заявленный fps={self.cap.get(cv2.CAP_PROP_FPS):.0f}, "
+            f"fourcc={self._fourcc_name()}"
+        )
+
+    def _fourcc_name(self) -> str:
+        """Четырёхбуквенный кодек камеры (MJPG/YUY2/…)."""
+        try:
+            v = int(self.cap.get(cv2.CAP_PROP_FOURCC))
+        except Exception:
+            return "?"
+        name = "".join(chr((v >> (8 * i)) & 0xFF) for i in range(4))
+        return name if name.strip("\x00 ") else "?"
 
     @property
     def current_fps(self) -> float:
@@ -360,7 +543,8 @@ class WriterThread(threading.Thread):
         self.stop_event = stop_event
         self.q: queue.Queue = queue.Queue(maxsize=self.rec_cfg["queue_size"])
         self.writer: cv2.VideoWriter | None = None
-        self.fps = 25.0        # реальный fps камеры; задаётся перед началом записи
+        # Целевой FPS таймлайна: recording.fps (0 = авто, main выставит по камере).
+        self.fps = float(self.rec_cfg.get("fps") or 30.0)
         self.path: Path | None = None
         self.timestamps: list[float] = []
         self.fps_window: deque[float] = deque(maxlen=60)
@@ -379,33 +563,54 @@ class WriterThread(threading.Thread):
         self._finalize_done = threading.Event()
         self._finalize_done.set()
 
+        # CFR-таймлайн: номера слотов, «последний кадр» для дублей, статистика.
+        self._slots = 0
+        self._last_frame: np.ndarray | None = None
+        self._size: tuple[int, int] = (0, 0)      # (w, h) — чётные, под mp4v
+        self.padded = 0                           # кадров добавлено дублями
+        self.dropped = 0                          # кадров выкинуто из очереди
+        self.MAX_PAD = 20                         # предел дублей подряд
+
     def start_recording(self, frame: np.ndarray):
         # Дождаться финализации предыдущей записи, чтобы она не закрыла наш writer.
         if not self._finalize_done.wait(timeout=10):
             self.logger.warning("Предыдущая запись не финализировалась за 10с")
         with self._lock:
             h, w = frame.shape[:2]
+            # mp4v капризен к нечётным размерам — «битые» блоки у краёв кадра.
+            w, h = w - (w % 2), h - (h % 2)
+            self._size = (w, h)
             name = time.strftime("%Y-%m-%d_%H-%M-%S") + ".mp4"
             self.path = self.out_dir / name
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            self.writer = cv2.VideoWriter(str(self.path), fourcc, float(self.fps or 25.0), (w, h))
+            self.writer = cv2.VideoWriter(str(self.path), fourcc, float(self.fps or 30.0), (w, h))
             if not self.writer.isOpened():
                 raise RuntimeError("VideoWriter не открылся")
             self.timestamps = []
             self.first_ts = None
             self.last_ts = None
             self.window = None
+            self._slots = 0
+            self._last_frame = None
+            self.padded = 0
+            self.dropped = 0
             self._recording.set()
 
     def put(self, ts: float, frame: np.ndarray):
         try:
             self.q.put_nowait((ts, frame))
         except queue.Full:
+            # Выкидываем самый старый кадр: таймлайн не рвётся — образовавшийся
+            # пропуск писатель закроет дублем предыдущего кадра (см. run()).
             try:
                 self.q.get_nowait()
             except queue.Empty:
                 pass
-            self.logger.warning("Очередь записи переполнена, пропущен кадр")
+            self.dropped += 1
+            if self.dropped == 1:
+                self.logger.warning(
+                    "Очередь записи переполнена — пропуски закрываются дублями кадров"
+                )
             try:
                 self.q.put_nowait((ts, frame))
             except queue.Full:
@@ -415,6 +620,10 @@ class WriterThread(threading.Thread):
         self._recording.clear()
         self._finalize_done.clear()
         self.q.put(None)
+
+    def wait_finalized(self, timeout: float = 10.0) -> bool:
+        """Дождаться завершения финализации (True — завершена или не начиналась)."""
+        return self._finalize_done.wait(timeout)
 
     def run(self):
         try:
@@ -435,15 +644,32 @@ class WriterThread(threading.Thread):
                     if self.writer is None:
                         continue
                     w_t0 = time.time()
-                    self.writer.write(frame)
+                    # CFR по слотам: видео обязано идти в реальном времени, даже если
+                    # кадры доходят реже (детекция грузит главный цикл). Пропуски
+                    # закрываем дублем последнего кадра — иначе таймлайн «сжимается»
+                    # и звук (нарезанный по wall-clock) уезжает.
+                    if self.first_ts is None:
+                        self.first_ts = ts
+                        self._slots = 0
+                        target_slot = 0
+                    else:
+                        target_slot = int(round((ts - self.first_ts) * self.fps))
+                    gap = target_slot - self._slots
+                    if gap > 0 and self._last_frame is not None:
+                        gap = min(gap, self.MAX_PAD)
+                        for _ in range(gap):
+                            self._write_frame(self._last_frame)
+                        self.padded += gap
+                        self._slots += gap
+                    self._write_frame(frame)
+                    self._last_frame = frame
+                    self._slots += 1
                     w_ms = (time.time() - w_t0) * 1000
                     self.write_times.append(w_ms)
                     if w_ms > 33:
                         self.logger.warning(f"write() медленный: {w_ms:.1f} мс")
                     self.timestamps.append(ts)
                     self.fps_window.append(ts)
-                    if self.first_ts is None:
-                        self.first_ts = ts
                     self.last_ts = ts
                 # При остановке: доработать остаток очереди и финализировать запись.
                 if self.stop_event.is_set() and self.q.empty():
@@ -452,18 +678,36 @@ class WriterThread(threading.Thread):
         except Exception:
             self.logger.error(f"WriterThread упал:\n{traceback.format_exc()}")
 
+    def _write_frame(self, frame: np.ndarray):
+        """Записать кадр ровно в размере writer'а (чётные w/h)."""
+        if self.writer is None:
+            return
+        w, h = self._size
+        if frame.shape[1] != w or frame.shape[0] != h:
+            frame = frame[:h, :w]
+        self.writer.write(frame)
+
     def _finalize(self):
         with self._lock:
             if self.writer is not None:
                 self.writer.release()
                 self.writer = None
-            if len(self.timestamps) >= 2:
-                span = self.timestamps[-1] - self.timestamps[0]
-                if span > 0 and self.path and self.path.exists():
-                    real_fps = (len(self.timestamps) - 1) / span
-                    self.logger.info(f"Запись завершена: {self.path.name}, реальный FPS={real_fps:.1f}")
-            if self.first_ts is not None and self.last_ts is not None:
-                self.window = (self.first_ts, self.last_ts)
+            if self.first_ts is not None and self._slots > 0:
+                # Длительность = слоты / fps: ровно столько же аудио в окне,
+                # поэтому дорожки не могут разъехаться по длине.
+                dur = self._slots / self.fps
+                self.window = (self.first_ts, self.first_ts + dur)
+                feed_fps = 0.0
+                if len(self.timestamps) >= 2:
+                    span = self.timestamps[-1] - self.timestamps[0]
+                    if span > 0:
+                        feed_fps = (len(self.timestamps) - 1) / span
+                name = self.path.name if self.path else "?"
+                self.logger.info(
+                    f"Запись завершена: {name}: {self._slots} кадров, {dur:.1f}с @ "
+                    f"{self.fps:.1f}fps (подача ≈{feed_fps:.1f}fps, "
+                    f"дубли {self.padded}, дропы {self.dropped})"
+                )
             path, window, cb = self.path, self.window, self.on_finalize
             self._enforce_disk_limit()
         # Разрешаем следующую запись только после завершения финализации этой.
@@ -629,6 +873,12 @@ def main():
     capture.start()
     logger.info(f"Камера открыта (backend={'DSHOW' if sys.platform == 'win32' else 'default'})")
 
+    # LED-подсветка камеры Logitech: сразу после инициализации камеры сообщаем
+    # ей, что она в работе (UVC XU, режим из config.yaml, по умолчанию 1 —
+    # «включено»; подробности и отладка — в led_control.py).
+    led = LogitechLEDController(logger, cfg.get("led", {}) or {})
+    led.apply_startup_mode()
+
     worker = RecognitionWorker(face_app, emb_data, cfg, logger, stop_event)
     worker.start()
 
@@ -669,21 +919,13 @@ def main():
     writer_thread = WriterThread(rec_dir, cfg, logger, stop_event)
     writer_thread.start()
 
+    # Финализированные записи кладём в очередь, а главный цикл сам решит, когда
+    # перейти PROCESSING -> SENDING_TELEGRAM (никаких внешних вызовов отправки).
+    finalized_q: queue.Queue = queue.Queue()
+
     def _on_recording_done(path, window):
-        """Финализация записи: вшиваем звук в саму запись и ставим видео в Telegram."""
-        aw = window if (audio.enabled and window) else None
-        # Локально вшиваем звук прямо в файл записи (работает и без Telegram).
-        want_local = bool(cfg["recording"].get("mux_audio", True)) and aw is not None
-        if not notifier.enabled and not want_local:
-            # Telegram выключен и мукс не нужен — но архив должен получить файл.
-            archive.upload_video(path)
-            return
-        notifier.enqueue_video(
-            path,
-            f"Запись завершена: {path.name}",
-            audio_window=aw,
-            replace_source=want_local,
-        )
+        """Колбэк WriterThread: запись закрыта, точное окно аудио известно."""
+        finalized_q.put((path, window))
 
     writer_thread.on_finalize = _on_recording_done
     disk_cleaner = DiskCleaner(rec_dir, cfg, logger, stop_event)
@@ -697,7 +939,6 @@ def main():
     tail_frames = 0
     consecutive = 0
     last_target_seen = 0.0
-    last_notify = 0.0
     last_known_emb_time = emb_path.stat().st_mtime
     last_recog_submit = 0.0
     warmup_left = mot["warmup_frames"]
@@ -719,6 +960,10 @@ def main():
     last_disk_check = 0.0
     disk_ok = True
 
+    # Стейт-машина пайплайна: всё про запись/склейку/отправку живёт в Pipeline
+    # (класс в этом же файле). Главный цикл только сообщает события и «тикает».
+    pipeline = Pipeline(cfg, logger, notifier, audio, finalized_q)
+
     target_track_id: int | None = None
     track_lost_since: float | None = None
     last_face_bbox: tuple | None = None
@@ -734,7 +979,10 @@ def main():
     signal.signal(signal.SIGINT, graceful_shutdown)
     signal.signal(signal.SIGTERM, graceful_shutdown)
 
-    logger.info("Старт цикла. Ctrl+C для остановки.")
+    logger.info(
+        f"HomeCamera v{__version__} — старт цикла "
+        f"(стейт-машина: {pipeline.state.value}). Ctrl+C для остановки."
+    )
     try:
         while not stop_event.is_set():
             capture.new_frame.wait(0.1)
@@ -747,6 +995,12 @@ def main():
             ts, frame = got
             last_seq = capture.frame_seq
 
+            # ───────────── СТЕЙТ-МАШИНА: сопровождение конвейера ─────────────
+            # Переходы и отправка — внутри Pipeline (class Pipeline выше);
+            # цикл лишь отдаёт ей события и «тикает» каждый кадр.
+            writing = pipeline.writing
+            pipeline.tick()
+
             h, w = frame.shape[:2]
             if w != capture.start_w or h != capture.start_h:
                 logger.warning(
@@ -755,6 +1009,7 @@ def main():
                 )
                 if writing:
                     writer_thread.finish()
+                    pipeline.on_recording_finished("смена разрешения камеры")
                     writing = False
                 capture.start_w = w
                 capture.start_h = h
@@ -872,22 +1127,24 @@ def main():
                 if not disk_ok:
                     logger.error(f"Недостаточно места на диске (нужно {cfg['resilience']['min_free_gb']} ГБ). Запись пропущена.")
                 else:
-                    writing = True
                     rec_start_ts = ts
-                    # Пишем с реальной частотой кадров, иначе видео «дёргается».
-                    measured = capture.current_fps
-                    if 5.0 <= measured <= 60.0:
-                        writer_thread.fps = measured
+                    # Целевой FPS таймлайна: recording.fps из конфига, иначе — по
+                    # камере (округлённо). Пропуски кадров писатель закрывает
+                    # дублями, так что «медленная подача» не ломает синхрон.
+                    target_fps = int(cfg["recording"].get("fps", 0) or 0)
+                    if target_fps <= 0:
+                        measured = capture.current_fps
+                        target_fps = int(round(measured)) if 10.0 <= measured <= 60.0 else 30
+                    writer_thread.fps = float(target_fps)
                     writer_thread.start_recording(frame)
                     for bts, bf in pre_buf.release():
                         writer_thread.put(bts, bf)
                     active = True
                     tail_frames = 0
-                    logger.info(">>> ТРИГГЕР: цель в кадре, запись началась")
-                    if notifier.enabled and (ts - last_notify > cfg["telegram"]["cooldown_seconds"]):
-                        last_notify = ts
-                        # Быстрое уведомление: JPEG-снимок сразу.
-                        notifier.send_snapshot(frame, f"Цель в кадре: {time.strftime('%H:%M:%S')}")
+                    # Переход IDLE -> RECORDING и снимок «цель в кадре» — целиком
+                    # внутри стейт-машины (снимок уедет в фазе SENDING_TELEGRAM).
+                    pipeline.on_recording_started(frame, ts)
+                    writing = True
 
             elif writing:
                 writer_thread.put(ts, frame)
@@ -902,12 +1159,15 @@ def main():
                 cap_hit = bool(max_sec) and (ts - rec_start_ts) > max_sec
                 if tail_done or cap_hit:
                     active = False
-                    writing = False
                     consecutive = 0
                     writer_thread.finish()
+                    pipeline.on_recording_finished(
+                        "лимит длительности" if cap_hit else "цель ушла"
+                    )
+                    writing = False
                     logger.info("<<< Запись завершена: " + ("лимит длительности" if cap_hit else "цель ушла"))
-                    # Видео+аудио отправит колбэк on_finalize — после слива очереди,
-                    # с точным окном (first_ts..last_ts).
+                    # Файл и окно аудио придут в finalized_q; Pipeline сам переведёт
+                    # PROCESSING -> SENDING_TELEGRAM и отправит видео со звуком.
 
             if args.preview and (ts - last_preview > 1.0 / 15):
                 last_preview = ts
@@ -940,20 +1200,18 @@ def main():
 
     except Exception:
         logger.error(f"Необработанное исключение:\n{traceback.format_exc()}")
-        if writing:
-            try:
-                writer_thread.finish()
-            except Exception:
-                pass
+        # Финализацию и доотправку последней записи сделает finally — здесь
+        # finish() НЕ вызываем, иначе on_finalize отработает дважды на один файл.
         sys.exit(1)
     finally:
         # Сначала просим writer финализировать текущую запись, ПОТОМ гасим потоки.
         # Иначе запись, идущая в момент Ctrl+C, остаётся недописанной (без звука/индекса).
-        if writing:
-            writer_thread.finish()
+        timeout = cfg["resilience"]["graceful_shutdown_timeout"]
+        # Дождаться финализации, упаковать остаток и разрешить отправку:
+        # notifier.shutdown() ниже доработает очередь (склейка + отправка + архив).
+        pipeline.shutdown(writer_thread, timeout)
         stop_event.set()
-        if writing:
-            timeout = cfg["resilience"]["graceful_shutdown_timeout"]
+        if writer_thread.is_alive():
             writer_thread.join(timeout=timeout)
             if writer_thread.is_alive():
                 logger.warning("WriterThread не завершился вовремя, закрываю принудительно")
@@ -961,6 +1219,7 @@ def main():
         archive.shutdown()
         audio.shutdown()
         keep_awake.stop()
+        led.shutdown()          # гасим подсветку Logitech и отпускаем USB
         cv2.destroyAllWindows()
         remove_pid_file()
 

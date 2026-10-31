@@ -3,6 +3,10 @@
 Все публичные методы неблокирующие: они только кладут задание в очередь, а
 реальную отправку и обработку видео выполняет отдельный поток-воркер.
 
+Видео-задания можно ставить с хэндлом SendJob (enqueue_video_job): главный
+цикл следит за фазами PROCESSING (склейка ffmpeg) и SENDING_TELEGRAM
+(отправка) и сам разрешает отправку — так работает стейт-машина в main.py.
+
 Ключевая особенность — «микширование» аудио: если у нас есть запись с камеры
 (обычно без звуковой дорожки) и доступен AudioRecorder, то по временному окну
 вырезается аудиоклип и склеивается с видео через ffmpeg. Затем видео приводится
@@ -34,6 +38,39 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 
 
 # Префиксы временных файлов, которые создаёт нотификатор и должен удалять сам.
 TEMP_PREFIXES = ("_h264_", "_av_", "_h264_low_")
+
+
+class SendJob:
+    """Хэндл задания «обработать и отправить видео» для стейт-машины main.py.
+
+    Жизненный цикл (события ставит воркер нотификатора):
+
+    * ``processing_done`` — фаза PROCESSING завершена: звук вшит, файл
+      к отправке готов (или признан неотправляемым);
+    * ``go_send`` — разрешение на отправку; ставит главный цикл, когда
+      переводит пайплайн в SENDING_TELEGRAM (единственная точка контроля);
+    * ``sending_done`` — фаза SENDING_TELEGRAM завершена (отправлено/пропущено).
+    """
+
+    __slots__ = (
+        "path", "caption", "audio_window", "replace_source",
+        "snapshot_jpeg", "snapshot_caption",
+        "send_path", "processing_done", "go_send", "sending_done", "ok",
+    )
+
+    def __init__(self, path, caption, audio_window=None, replace_source=False,
+                 snapshot_jpeg=None, snapshot_caption=""):
+        self.path = Path(path)
+        self.caption = caption
+        self.audio_window = audio_window
+        self.replace_source = replace_source
+        self.snapshot_jpeg = snapshot_jpeg          # bytes JPEG или None
+        self.snapshot_caption = snapshot_caption
+        self.send_path: Path | None = None          # готовый к отправке файл
+        self.processing_done = threading.Event()
+        self.go_send = threading.Event()
+        self.sending_done = threading.Event()
+        self.ok = False
 
 
 class TelegramNotifier:
@@ -139,26 +176,50 @@ class TelegramNotifier:
         except Exception as e:  # никогда не роняем вызывающий поток
             self.logger.warning(f"Ошибка кодирования снимка: {e}")
 
+    def enqueue_video_job(
+        self,
+        path: Path,
+        caption: str,
+        audio_window: tuple[float, float] | None = None,
+        replace_source: bool = False,
+        snapshot_jpeg: bytes | None = None,
+        snapshot_caption: str = "",
+    ) -> "SendJob | None":
+        """Поставить видео в очередь и вернуть SendJob для главного цикла.
+
+        audio_window — (start_ts, end_ts) или None.
+        replace_source=True — вшить звук в саму запись на диске (работает даже если
+        Telegram отключён), чтобы локальный mp4 тоже был со звуком.
+        snapshot_jpeg — снимок, который уйдёт перед видео в фазе SENDING_TELEGRAM.
+
+        Отправку разрешает вызывающий: ``job.go_send.set()`` после того, как
+        увидит ``job.processing_done`` (см. стейт-машину в main.py).
+        """
+        if path is None:
+            return None
+        job = SendJob(path, caption, audio_window, replace_source,
+                      snapshot_jpeg, snapshot_caption)
+        self._queue.put(("video_job", caption, job))
+        return job
+
     def enqueue_video(
         self,
         path: Path,
         caption: str,
         audio_window: tuple[float, float] | None = None,
         replace_source: bool = False,
-    ) -> None:
-        """Поставить видео в очередь.
-
-        audio_window — (start_ts, end_ts) или None.
-        replace_source=True — вшить звук в саму запись на диске (работает даже если
-        Telegram отключён), чтобы локальный mp4 тоже был со звуком.
-        """
+    ) -> "SendJob | None":
+        """Старый fire-and-forget API (selftest и внешние вызовы): отправка сразу."""
         if path is None:
-            return
+            return None
         if not self.enabled and not replace_source:
-            return
+            return None
         if self.enabled and not self.send_video and not replace_source:
-            return
-        self._queue.put(("video", caption, (Path(path), audio_window, replace_source)))
+            return None
+        job = self.enqueue_video_job(path, caption, audio_window, replace_source)
+        if job is not None:
+            job.go_send.set()
+        return job
 
     def shutdown(self) -> None:
         """Дождаться, пока воркер доработает очередь (мукс/отправку) и выйдет."""
@@ -192,9 +253,9 @@ class TelegramNotifier:
                     self._broadcast_message(payload)
                 elif kind == "photo":
                     self._broadcast_photo(payload, extra)
-                elif kind == "video":
-                    path, audio_window, replace_source = extra
-                    self._broadcast_video(payload, path, audio_window, replace_source)
+                elif kind == "video_job":
+                    # payload = caption, extra = SendJob (см. enqueue_video_job)
+                    self._run_video_job(payload, extra)
                 else:
                     self.logger.warning(f"Неизвестный тип задания: {kind}")
             except Exception as e:
@@ -223,22 +284,44 @@ class TelegramNotifier:
                 timeout=60,
             )
 
-    def _broadcast_video(self, caption: str, path: Path, audio_window, replace_source: bool = False) -> None:
-        """Полный конвейер видео: микширование аудио -> H.264 -> лимит размера."""
+    def _run_video_job(self, caption: str, job: "SendJob") -> None:
+        """Провести SendJob через фазы: PROCESSING (склейка) и SENDING_TELEGRAM."""
         self._temp_files = set()
-        parent: Path | None = None
+        parent = job.path.parent
         try:
-            path = Path(path)
-            parent = path.parent
+            self._process_video_job(job)
+            self._send_video_job(caption, job)
+            job.ok = True
+        except Exception as e:
+            self.logger.error(f"Ошибка обработки видео {job.path}: {e}")
+        finally:
+            # Страховка: фазы всегда фиксируем, иначе главный цикл зависнет в PROCESSING.
+            job.processing_done.set()
+            job.sending_done.set()
+            # Всегда подчищаем созданные временные файлы.
+            self._cleanup_temp(parent)
+
+    def _process_video_job(self, job: "SendJob") -> None:
+        """Фаза PROCESSING: мукс аудио, H.264, лимит размера, выгрузка в архив."""
+        try:
+            path = job.path
             if not path.exists():
                 self.logger.error(f"Видеофайл не найден: {path}")
+                job.send_path = None
                 return
 
-            send_path = self._build_send_file(path, audio_window)
+            # Ни отправки, ни локального микса не нужно — сразу отдаём потребителю.
+            if not (job.replace_source or (self.enabled and self.send_video)):
+                self._fire_on_ready(path)
+                job.send_path = None
+                return
+
+            send_path = self._build_send_file(path, job.audio_window)
+            job.send_path = send_path
 
             # Вшить звук в саму запись на диске (если удалось собрать новую версию).
             if (
-                replace_source
+                job.replace_source
                 and send_path is not None
                 and send_path != path
                 and send_path.parent == self.tmp_dir
@@ -246,36 +329,63 @@ class TelegramNotifier:
             ):
                 try:
                     os.replace(send_path, path)
-                    send_path = path
+                    job.send_path = path
                     self.logger.info(f"Звук вшит в запись: {path.name}")
                 except OSError as e:
                     self.logger.warning(f"Не удалось вшить звук в {path.name}: {e}")
 
             # Файл на диске готов (со звуком) — отдаём внешнему потребителю (выгрузка).
-            if self.on_ready is not None:
-                try:
-                    self.on_ready(path)
-                except Exception as e:
-                    self.logger.warning(f"on_ready упал: {e}")
+            self._fire_on_ready(path)
+        finally:
+            job.processing_done.set()
 
-            if send_path is None:
-                # Файл не удалось уложить в лимит — отправляем текстом.
-                self._broadcast_message(
-                    f"{caption}\nВидео слишком большое для Telegram, файл сохранён: {path.name}"
+    def _await_send_permission(self, job: "SendJob", timeout_s: float = 300.0) -> None:
+        """Дождаться «добра» на отправку от главного цикла (стейт SENDING_TELEGRAM)."""
+        deadline = time.time() + timeout_s
+        while not job.go_send.wait(0.25):
+            if self.stop_event.is_set():
+                return  # завершение программы — отправляем «на выходе»
+            if time.time() > deadline:
+                self.logger.warning(
+                    "SendJob: главный цикл не разрешил отправку за %.0f с — отправляю принудительно",
+                    timeout_s,
                 )
                 return
 
-            # Если Telegram выключен — ограничиваемся локальным муксом.
-            if not (self.enabled and self.send_video):
-                return
+    def _send_video_job(self, caption: str, job: "SendJob") -> None:
+        """Фаза SENDING_TELEGRAM: снимок + mp4 со звуком."""
+        self._await_send_permission(job)
 
-            for chat_id in self.chat_ids:
-                self._send_video_with_retry(chat_id, send_path, caption)
+        # Снимок «цель в кадре» уходит в этой же фазе, перед видео.
+        if job.snapshot_jpeg is not None and self.enabled and self.send_photo:
+            snap_caption = job.snapshot_caption or f"Снимок: {job.path.name}"
+            self._broadcast_photo(snap_caption, job.snapshot_jpeg)
+
+        if job.send_path is None:
+            # Файл не удалось уложить в лимит — отправляем текстом.
+            if self.enabled and job.path.exists():
+                self._broadcast_message(
+                    f"{caption}\nВидео слишком большое для Telegram, файл сохранён: {job.path.name}"
+                )
+            return
+
+        # Если Telegram выключен — ограничиваемся локальным муксом.
+        if not (self.enabled and self.send_video):
+            return
+
+        # abort_on_stop=False: клип доходит даже при завершении программы
+        # (notifier.shutdown() доделывает очередь — терять видео при выходе нельзя).
+        for chat_id in self.chat_ids:
+            self._send_video_with_retry(chat_id, job.send_path, caption, abort_on_stop=False)
+
+    def _fire_on_ready(self, path: Path) -> None:
+        """Отдать готовый файл внешнему потребителю (например, выгрузка в архив)."""
+        if self.on_ready is None:
+            return
+        try:
+            self.on_ready(path)
         except Exception as e:
-            self.logger.error(f"Ошибка обработки видео {path}: {e}")
-        finally:
-            # Всегда подчищаем созданные временные файлы.
-            self._cleanup_temp(parent)
+            self.logger.warning(f"on_ready упал: {e}")
 
     # ------------------------------------------------------------------ #
     # Конвейер обработки видео
@@ -369,13 +479,23 @@ class TelegramNotifier:
             self.logger.info("Аудиоклип для окна не найден — шлю видео без звука")
             return video_path
 
+        # Ручная подстройка синхронизации: плюс = звук позже (см. audio.sync_offset_ms).
+        try:
+            off_ms = float((getattr(self.audio, "cfg", {}) or {}).get("sync_offset_ms", 0) or 0)
+        except (TypeError, ValueError):
+            off_ms = 0.0
+
         out = self._tmp_path("_av_" + video_path.stem + ".mp4")
         cmd = [
             self.ffmpeg_path, "-y",
             "-i", str(video_path),
+            *(["-itsoffset", f"{off_ms / 1000.0:.3f}"] if off_ms else []),
             "-i", str(wav),
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
             "-pix_fmt", "yuv420p",
+            # async=1: если длины дорожек чуть разошлись — мягко растянуть/сжать
+            # аудио, чтобы к концу клипа не накапливался рассинхрон.
+            "-af", "aresample=async=1",
             "-c:a", "aac", "-b:a", "64k",
             "-shortest", "-movflags", "+faststart",
             str(out),
@@ -477,7 +597,8 @@ class TelegramNotifier:
             self.logger.warning(f"Telegram API {method} для {chat_id}: {e}")
             return None
 
-    def _send_with_retry(self, method: str, chat_id: str, **kwargs) -> bool:
+    def _send_with_retry(self, method: str, chat_id: str,
+                         abort_on_stop: bool = True, **kwargs) -> bool:
         """Отправить с экспоненциальным backoff (retry_base * 2**attempt)."""
         for attempt in range(self.retry_max):
             if self._api(method, chat_id, **kwargs):
@@ -487,14 +608,15 @@ class TelegramNotifier:
                 self.logger.warning(
                     f"Повтор {method} для {chat_id} через {delay:.0f}с..."
                 )
-                if self.stop_event.wait(delay):
+                if self.stop_event.wait(delay) and abort_on_stop:
                     return False
         self.logger.error(
             f"Не удалось выполнить {method} для {chat_id} за {self.retry_max} попыток"
         )
         return False
 
-    def _send_video_with_retry(self, chat_id: str, path: Path, caption: str) -> bool:
+    def _send_video_with_retry(self, chat_id: str, path: Path, caption: str,
+                               abort_on_stop: bool = True) -> bool:
         """Отправить видео с ретраями."""
         for attempt in range(self.retry_max):
             if self._send_video(chat_id, path, caption):
@@ -504,7 +626,7 @@ class TelegramNotifier:
                 self.logger.warning(
                     f"Повтор sendVideo для {chat_id} через {delay:.0f}с..."
                 )
-                if self.stop_event.wait(delay):
+                if self.stop_event.wait(delay) and abort_on_stop:
                     return False
         self.logger.error(
             f"Не удалось отправить видео {path.name} для {chat_id} за {self.retry_max} попыток"

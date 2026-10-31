@@ -7,7 +7,7 @@ rem ============================================================================
 setlocal
 cd /d "%~dp0"
 
-echo === HomeCamera: сборка (Windows) ===
+echo === HomeCamera v2.0: сборка (Windows) ===
 
 where python >nul 2>nul
 if errorlevel 1 (

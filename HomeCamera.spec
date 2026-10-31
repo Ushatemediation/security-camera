@@ -20,9 +20,11 @@ for extra in ("yolov8n.pt", "ffmpeg.exe", "ffmpeg"):
         datas.append((extra, "."))
 
 # --- тяжёлые пакеты: забираем всё, что PyInstaller обычно теряет -------------
+# (usb=pyusb — для LED Logitech; libusb-1.0.dll в бандл не кладём: на Windows
+#  LED-фича деградирует мягко, см. led_control.py)
 hiddenimports = []
 binaries = []
-for pkg in ("insightface", "onnxruntime", "ultralytics", "sounddevice"):
+for pkg in ("insightface", "onnxruntime", "ultralytics", "sounddevice", "usb", "imageio_ffmpeg"):
     try:
         d, b, h = collect_all(pkg)
         datas += d
@@ -40,7 +42,7 @@ try:
 except Exception:
     pass
 
-hiddenimports += ["cv2", "yaml", "requests", "numpy"]
+hiddenimports += ["cv2", "yaml", "requests", "numpy", "camera_watcher", "version"]
 
 a = Analysis(
     ["launcher.py"],

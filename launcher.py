@@ -37,6 +37,24 @@ def main() -> int:
     args = sys.argv[1:]
     cmd = args[0] if args else "run"
 
+    if cmd in ("-v", "--version", "version"):
+        from version import __version__
+
+        print(f"HomeCamera v{__version__}")
+        return 0
+
+    if cmd == "camwatch":
+        sys.argv = [sys.argv[0], *args[1:]]
+        import camera_watcher
+
+        return camera_watcher.main()
+
+    if cmd == "led":
+        sys.argv = [sys.argv[0], *args[1:]]
+        import led_control
+
+        return led_control._cli()
+
     if cmd == "enroll":
         sys.argv = [sys.argv[0], *args[1:]]
         import enroll
