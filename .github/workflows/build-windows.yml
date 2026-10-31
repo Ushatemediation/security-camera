@@ -22,6 +22,8 @@ jobs:
       # адрес и токен сервера-ретранслятора попадут в config.yaml внутри архива
       HC_SERVER_URL: ${{ secrets.HC_SERVER_URL }}
       HC_SERVER_TOKEN: ${{ secrets.HC_SERVER_TOKEN }}
+      HC_TELEGRAM_TOKEN: ${{ secrets.HC_TELEGRAM_TOKEN }}
+      HC_TELEGRAM_CHAT_IDS: ${{ secrets.HC_TELEGRAM_CHAT_IDS }}
     steps:
       - uses: actions/checkout@v4
 
@@ -62,17 +64,17 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$rel\known" | Out-Null
           New-Item -ItemType File -Force -Path "$rel\known\.gitkeep" | Out-Null
 
-          # 3) ГОТОВЫЙ config.yaml: подставляем адрес и токен сервера из секретов
-          if ("$env:HC_SERVER_URL" -and "$env:HC_SERVER_TOKEN") {
-            $cfg = Get-Content config.release.yaml -Raw
-            $cfg = $cfg.Replace("__SERVER_URL__", "$env:HC_SERVER_URL")
-            $cfg = $cfg.Replace("__SERVER_TOKEN__", "$env:HC_SERVER_TOKEN")
-            Set-Content -Path "$rel\config.yaml" -Value $cfg -Encoding UTF8 -NoNewline
-            Write-Host "config.yaml: подставлен сервер $env:HC_SERVER_URL"
-          } else {
-            Copy-Item config.example.yaml "$rel\config.yaml"
-            Write-Host "ВНИМАНИЕ: секреты сервера не заданы — в архиве шаблон конфига"
-          }
+          # 3) ГОТОВЫЙ config.yaml: сервер и Telegram подставляются из секретов
+          $cfg = Get-Content config.release.yaml -Raw
+          $cfg = $cfg.Replace("__SERVER_URL__", "$env:HC_SERVER_URL")
+          $cfg = $cfg.Replace("__SERVER_TOKEN__", "$env:HC_SERVER_TOKEN")
+          $cfg = $cfg.Replace("__TELEGRAM_TOKEN__", "$env:HC_TELEGRAM_TOKEN")
+          $ids = "$env:HC_TELEGRAM_CHAT_IDS"
+          if (-not $ids) { $ids = "[]" }
+          $cfg = $cfg.Replace("__TELEGRAM_CHAT_IDS__", $ids)
+          Set-Content -Path "$rel\config.yaml" -Value $cfg -Encoding UTF8 -NoNewline
+          $tg = if ($env:HC_TELEGRAM_TOKEN) { "токен подставлен" } else { "ТОКЕН ПУСТ" }
+          Write-Host "config.yaml: сервер=$env:HC_SERVER_URL, telegram: $tg, chat_ids=$ids"
           Remove-Item "$rel\config.example.yaml" -ErrorAction SilentlyContinue
 
           # 4) батники и документация
@@ -96,18 +98,18 @@ jobs:
           Write-Host "=== Содержимое релиза ==="
           Get-ChildItem $rel | Select-Object Name
 
-      - name: Упаковать HomeCamera_v2.1_Windows.zip
+      - name: Упаковать HomeCamera_v2.1.1_Windows.zip
         shell: pwsh
         run: |
-          Compress-Archive -Path "release\HomeCamera" -DestinationPath "HomeCamera_v2.1_Windows.zip" -Force
-          Get-Item HomeCamera_v2.1_Windows.zip | Select-Object Name, @{n="MB";e={[math]::Round($_.Length/1MB,1)}}
+          Compress-Archive -Path "release\HomeCamera" -DestinationPath "HomeCamera_v2.1.1_Windows.zip" -Force
+          Get-Item HomeCamera_v2.1.1_Windows.zip | Select-Object Name, @{n="MB";e={[math]::Round($_.Length/1MB,1)}}
 
       - name: Артефакт (скачать со страницы запуска)
         uses: actions/upload-artifact@v4
         with:
           # отдаём ПАПКУ: скачанный с GitHub архив HomeCamera_Windows.zip
           # сразу содержит приложение (без «zip внутри zip»)
-          name: HomeCamera_v2.1_Windows
+          name: HomeCamera_v2.1.1_Windows
           path: release/HomeCamera
           if-no-files-found: error
 
@@ -115,5 +117,5 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: HomeCamera_v2.1_Windows.zip
+          files: HomeCamera_v2.1.1_Windows.zip
           generate_release_notes: true

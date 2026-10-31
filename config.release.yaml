@@ -42,10 +42,8 @@ resilience:
   graceful_shutdown_timeout: 10
 
 telegram:
-  token: ""                    # пусто: сеть блокирует Telegram, шлём через сервер
-  chat_ids:
-    - '5318264825'
-    - '1580773550'
+  token: "__TELEGRAM_TOKEN__"          # подставляется из GitHub Secret HC_TELEGRAM_TOKEN
+  chat_ids: __TELEGRAM_CHAT_IDS__      # из Secret HC_TELEGRAM_CHAT_IDS, формат: ['123','456']
   cooldown_seconds: 30
   retry_base_seconds: 5
   retry_max_attempts: 3

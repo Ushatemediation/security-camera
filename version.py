@@ -5,5 +5,5 @@
 с именем релиза (``PACK_RELEASE.bat`` → ``VER``, GitHub Actions, docs/BUILD.md).
 """
 
-__version__ = "2.1.0"
+__version__ = "2.1.1"
 APP_NAME = "HomeCamera"

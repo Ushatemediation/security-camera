@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.1
+
+- **Релизный zip уже с токеном**: `config.yaml` внутри архива собирается из
+  `config.release.yaml`, куда подставляются `HC_TELEGRAM_TOKEN` и
+  `HC_TELEGRAM_CHAT_IDS` из GitHub Secrets — вписать токен руками больше не нужно.
+- Локальная сборка (`PACK_RELEASE.bat`) кладёт в архив ваш рабочий `config.yaml`,
+  если он есть рядом.
+
 ## 2.1.0
 
 ### Новое

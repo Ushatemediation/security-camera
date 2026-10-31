@@ -2,13 +2,13 @@
 chcp 65001 >nul
 rem ============================================================================
 rem  PACK_RELEASE.bat — собрать релизный ZIP для раздачи:
-rem  HomeCamera_v2.1_Windows.zip  (exe + модели + ffmpeg + config + батники).
+rem  HomeCamera_v2.1.1_Windows.zip  (exe + модели + ffmpeg + config + батники).
 rem  Сначала собирает проект (build.bat), затем упаковывает.
 rem ============================================================================
 setlocal
 cd /d "%~dp0"
 
-set "VER=2.1"
+set "VER=2.1.1"
 set "NAME=HomeCamera_v%VER%_Windows"
 set "OUT=dist\HomeCamera"
 set "STAGE=dist\%NAME%"
@@ -31,6 +31,8 @@ for %%F in (START_CAMERA.bat START_CAMERA.vbs INSTALL_AUTOSTART.bat UNINSTALL.ba
 )
 if exist README.md copy /y README.md "%OUT%\README.md" >nul
 if not exist "%OUT%\config.yaml" copy /y config.example.yaml "%OUT%\config.yaml" >nul
+rem локальная сборка: если у вас уже настроен config.yaml — он и поедет в архив
+if exist config.yaml copy /y config.yaml "%OUT%\config.yaml" >nul
 
 rem 3) переименовываю папку в релизное имя и упаковываю
 echo [*] Упаковываю в ZIP...
